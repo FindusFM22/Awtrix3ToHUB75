@@ -101,7 +101,44 @@ curl -X POST http://<IP>/api/settings \
 
 Nötig weil die Schaltung (3V3 → LDR → GPIO34, 10k nach GND) zur Ulanzi-Polung invertiert ist.
 
-## Dokumentation
+## Sensor-Verdrahtung
+
+### BME280 — Temperatur, Luftfeuchtigkeit, Luftdruck
+
+Der GY-BME280-5V-Breakout verträgt direkt 5V und hat einen integrierten 3.3V-Regler.
+
+```
+ESP32          BME280 (GY-BME280-5V)
+─────────────────────────────────────
+5V-Schiene  →  VCC
+GND         →  GND
+GPIO 21     →  SDA
+GPIO 22     →  SCL
+```
+
+
+---
+
+### GL5528 LDR — Automatische Helligkeit
+
+Spannungsteiler: Der LDR und ein 10kΩ-Widerstand teilen die 3,3V-Versorgung.
+Je mehr Licht → desto geringer der LDR-Widerstand → desto höher die Spannung an GPIO 34.
+
+```
+ESP32 3V3
+    │
+   [LDR]  ← GL5528 Fotowiderstand
+    │
+    ├──── GPIO 34  (ADC-Eingang, 10-bit, 0–1023)
+    │
+  [10kΩ]  ← Pull-Down Widerstand
+    │
+   GND
+```
+
+> **Hinweis:** `ldr_on_ground: true` in den Settings setzen — diese Polung ist  
+> zum Ulanzi-Original invertiert (dort sitzt der Widerstand oben, der LDR unten).
+
 
 Alle technischen Entscheidungen, Capability-Macros und Port-Details: [HUB75_PORT_PLAN.md](HUB75_PORT_PLAN.md)
 
