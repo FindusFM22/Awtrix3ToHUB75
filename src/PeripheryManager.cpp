@@ -83,6 +83,10 @@ Adafruit_SHT31 sht31;
 #ifdef awtrix2_upgrade
 #define USED_PHOTOCELL LightDependentResistor::GL5528
 #define PHOTOCELL_SERIES_RESISTOR 1000
+#elif defined(HUB75)
+// GL5528 mit 10kΩ Pull-Down
+#define USED_PHOTOCELL LightDependentResistor::GL5528
+#define PHOTOCELL_SERIES_RESISTOR 10000
 #else
 #define USED_PHOTOCELL LightDependentResistor::GL5516
 #define PHOTOCELL_SERIES_RESISTOR 10000
