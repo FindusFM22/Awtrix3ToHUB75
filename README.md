@@ -14,7 +14,9 @@ Fork of [Blueforcer/awtrix3](https://github.com/Blueforcer/awtrix3), adapted for
 
 ## Pinbelegung HUB75 → ESP32
 
-![HUB75 Pin Layout](HUB32pinLayout.png)
+<table>
+<tr>
+<td>
 
 | Signal | HUB75 Pin | ESP32 GPIO |
 |---|---|---|
@@ -34,6 +36,15 @@ Fork of [Blueforcer/awtrix3](https://github.com/Blueforcer/awtrix3), adapted for
 | GND | 9, 15 | GND |
 
 Pin 13 = NC, nicht anschließen.
+
+</td>
+<td>
+
+<img src="HUB32pinLayout.png" width="260"/>
+
+</td>
+</tr>
+</table>
 
 ## Build
 
