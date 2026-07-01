@@ -58,24 +58,48 @@ Flash: 65.7%  (1220 KB / 1856 KB)  — SUCCESS
 
 ## Erste Inbetriebnahme
 
-1. ESP32 per USB flashen (Panel noch nicht anschließen)
-2. WLAN-Zugangsdaten über AWTRIX AP-Mode (`AWTRIX_xxxx`) eintragen
-3. USB trennen, Panel anschließen, MeanWell-Netzteil anschließen
-4. Strom — Panel zeigt IP-Adresse, dann Web-UI unter `http://<IP>`
+### 1. Flashen
 
-**Wichtig:** USB und MeanWell-5V niemals gleichzeitig anlegen.
+ESP32 per USB an den PC anschließen (Panel noch nicht anschließen).
 
-## Kalibrierung (dev.json)
-
-Nach dem ersten Boot im Web-UI unter Settings oder direkt als JSON:
-
-```json
-{
-  "ldr_on_ground": true
-}
+```bash
+pio run -e hub75 -t upload
 ```
 
-LDR-Polung dieser Schaltung (3V3 → LDR → GPIO34 + 10k → GND) ist umgekehrt zum Ulanzi-Default.
+Alternativ: [Online-Flasher](https://blueforcer.github.io/awtrix3/#/flasher) im Browser (Chrome/Edge, kein Firefox).
+
+### 2. WLAN einrichten
+
+Nach dem ersten Boot öffnet der ESP32 ein eigenes WLAN:
+
+- **SSID:** `awtrix_XXXXX`
+- **Passwort:** `12345678`
+
+Damit verbinden, dann Browser öffnen und `http://192.168.4.1` aufrufen. Dort Home-WLAN-SSID und Passwort eintragen, speichern. Der ESP32 verbindet sich und zeigt die zugewiesene IP-Adresse auf dem Panel an (sobald das Panel angeschlossen ist).
+
+### 3. Panel anschließen und in Betrieb nehmen
+
+1. ESP32 von USB trennen
+2. HUB75-Flachbandkabel anschließen (Pin 1 = roter Streifen am Kabel)
+3. Stromkabel Panel (rot = +5V, schwarz = GND) an MeanWell anschließen
+4. ESP32 VIN und GND über die 5V-Schiene vom MeanWell speisen
+5. MeanWell einschalten — Panel zeigt kurz die IP-Adresse, dann startet die App-Schleife
+
+**Web-UI:** `http://<angezeigte-IP>` — dort MQTT, Helligkeit, Apps konfigurieren.
+
+> **Wichtig:** USB und MeanWell-5V niemals gleichzeitig anlegen — zwei 5V-Quellen parallel können den Spannungsregler auf dem ESP32 beschädigen.
+
+### 4. LDR kalibrieren
+
+Im Web-UI unter Settings oder direkt via HTTP:
+
+```bash
+curl -X POST http://<IP>/api/settings \
+  -H "Content-Type: application/json" \
+  -d '{"ldr_on_ground": true}'
+```
+
+Nötig weil die Schaltung (3V3 → LDR → GPIO34, 10k nach GND) zur Ulanzi-Polung invertiert ist.
 
 ## Dokumentation
 
