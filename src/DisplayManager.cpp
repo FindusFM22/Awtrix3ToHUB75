@@ -1171,7 +1171,7 @@ void DisplayManager_::setup()
   HUB75_I2S_CFG mxconfig(HUB75_PANEL_W, HUB75_PANEL_H, HUB75_PANEL_CHAIN, pins);
   // Conservative driver default; flip clkphase or change driver type below if
   // the panel shows ghosting or shifted colours.
-  mxconfig.clkphase = false;
+  mxconfig.clkphase = true;
   mxconfig.driver = HUB75_I2S_CFG::SHIFTREG;
   dma_display = new MatrixPanel_I2S_DMA(mxconfig);
   dma_display->begin();
