@@ -129,9 +129,9 @@ ESP32 3V3
     │
    [LDR]  ← GL5528 Fotowiderstand
     │
-    ├──── GPIO 34  (ADC-Eingang, 10-bit, 0–1023)
+GPIO 34  ──────── ADC-Eingang (10-bit, 0–1023)
     │
-  [10kΩ]  ← Pull-Down Widerstand
+  [10kΩ]  ← Pull-Down nach GND
     │
    GND
 ```
