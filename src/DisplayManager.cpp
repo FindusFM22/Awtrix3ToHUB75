@@ -1163,8 +1163,8 @@ void DisplayManager_::setup()
 #ifdef DISPLAY_HUB75
   // Pin mapping matches the user's wiring documented in HUB75_PORT_PLAN.md.
   HUB75_I2S_CFG::i2s_pins pins = {
-      /*R1*/ 25, /*G1*/ 26, /*B1*/ 27,
-      /*R2*/ 14, /*G2*/ 12, /*B2*/ 13,
+      /*R1*/ 25, /*G1*/ 27, /*B1*/ 26,
+      /*R2*/ 14, /*G2*/ 13, /*B2*/ 12,
       /*A*/ 23,  /*B*/ 19,  /*C*/ 5,
       /*D*/ 17,  /*E*/ -1,
       /*LAT*/ 4, /*OE*/ 15, /*CLK*/ 16};
