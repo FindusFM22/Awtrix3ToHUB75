@@ -1227,18 +1227,12 @@ static GridSlot gridSlots[4];
 static bool gridInitialised = false;
 
 // Single-page layout on the 64x32 panel:
-//   Rows 0-7:   Calendar box (9x8, day number inside) + bigdigits HH:MM
-//                (6x7 per glyph → 34 px wide) side-by-side, centred.
-//   Row 9:      Weekday indicator line, 7 segments spanning most of the panel
-//                width, current day highlighted.
-//   Rows 22-31: Continuous left-scrolling marquee — indoor temp, outdoor
-//                temp (dynamic weather icon), humidity, UV index. Slow
-//                (~10 px/s) so values stay readable.
-//
-// No date text row: the day number lives inside the calendar box, and the
-// weekday line below the clock covers the "which day is it" question.
+//   Rows 0-15:  Calendar box (9x16, day number inside) + bigdigits HH:MM
+//                stretched vertically 2x (32x14) side-by-side, centred.
+//   Row 17:     Weekday indicator line, 7 segments centred.
+//   Rows 22-31: Continuous left-scrolling marquee at ~10 px/s.
 
-// Helper: 0xRRGGBB → Adafruit 5-6-5 for matrix->setTextColor.
+// Helper: 0xRRGGBB → Adafruit 5-6-5 for matrix->setTextColor / fillRect.
 static inline uint16_t rgb888to565(uint32_t c)
 {
   uint8_t r = (c >> 16) & 0xFF;
@@ -1247,58 +1241,76 @@ static inline uint16_t rgb888to565(uint32_t c)
   return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
 
-// The clock block width: calendar box (9) + gap (2) + digits (5 * 6 + gaps).
-// Widths in "bigdigits_mask" per column: 6 px per digit, with the classic
-// TimeApp squeezing digits 3-4 by 2 px and the colon by 1 px (see the
-// `xx = i * 7 - (i > 2 ? 2 : 0) - (i == 2)` line in TimeApp). Reproduced
-// here so the digits look right; last column of digit 4 sits at x = 33
-// relative to the digits' base x — total digit-block width = 34.
+// Reproduces TimeApp's TIME_MODE=5 clock but stretched to double height.
+// Uses the classic bigdigits_mask "holes" approach: paint a solid coloured
+// rectangle, then punch black pixels where the mask bits are set. Doing
+// this 2x on the y axis gives 6x14 glyphs (was 6x7) without needing a new
+// glyph table. Total digit block width unchanged (32 px).
 static void drawClockRow(FastLED_NeoMatrix *matrix)
 {
-  // --- Compose HH:MM the same way TimeApp does, with blinking colon. ---
+  // --- Format HH:MM the same way TimeApp does, with blinking colon. ---
   char t[8];
   const char *fmt = "%H:%M";
   if (TIME_FORMAT.length() >= 3 && TIME_FORMAT[2] == ' ')
     fmt = (timer_time() % 2) ? "%H %M" : "%H:%M";
   strftime(t, sizeof(t), fmt, timer_localtime());
-  // TimeApp swaps space→';' (blank glyph) so bigdigits_mask indexing works.
-  if (t[2] == ' ')
-    t[2] = ';';
-  if (t[0] == ' ')
-    t[0] = ';';
+  // Space→';' remaps to the "blank" glyph in bigdigits_mask (index 11).
+  if (t[2] == ' ') t[2] = ';';
+  if (t[0] == ' ') t[0] = ';';
 
-  // --- Layout: box left, digits right, whole block centred. ---
+  // --- Layout: 9-wide box, 2 px gap, 32-wide digits → 43 px, centred. ---
   const int BOX_W = 9;
-  const int BOX_H = 8;
+  const int BOX_H = 16;
   const int GAP = 2;
-  const int DIGITS_W = 34;     // matches TimeApp's TIME_MODE=5 width
-  const int TOTAL_W = BOX_W + GAP + DIGITS_W;   // 45
-  const int OX = (64 - TOTAL_W) / 2;             // 9
+  const int DIGITS_W = 32;
+  const int DIGITS_H = 14;
+  const int TOTAL_W = BOX_W + GAP + DIGITS_W;   // 43
+  const int OX = (64 - TOTAL_W) / 2;             // 10
 
-  // --- Calendar box + day number (rows 0-7). ---
+  // --- Calendar box: body + header stripe, both doubled in height. ---
   DisplayManager.drawFilledRect(OX, 0, BOX_W, BOX_H, CALENDAR_BODY_COLOR);
-  DisplayManager.drawFilledRect(OX, 0, BOX_W, 2, CALENDAR_HEADER_COLOR);
+  DisplayManager.drawFilledRect(OX, 0, BOX_W, 4, CALENDAR_HEADER_COLOR);
 
-  char dayStr[3];
+  // Day number inside the box (small font, positioned toward the bottom
+  // half). The bigger box gives room for a 2x-height day number if wanted
+  // later; for now stay with size 1 so single/double digit widths line up.
   const int mday = timer_localtime()->tm_mday;
+  char dayStr[3];
   snprintf(dayStr, sizeof(dayStr), "%d", mday);
   const int dayOffX = (mday < 10) ? 3 : 1;
   DisplayManager.setTextColor(CALENDAR_TEXT_COLOR);
-  DisplayManager.setCursor(OX + dayOffX, 7);
+  DisplayManager.setCursor(OX + dayOffX, 14);   // baseline y=14 → rendered rows 8-14
   DisplayManager.matrixPrint(dayStr);
 
-  // --- bigdigits HH:MM (rows 0-6). Same glyph mapping as TimeApp. ---
+  // --- Digits: solid colour bg + black mask overlay, 2x on the y axis. ---
   const uint16_t clockColor = (TIME_COLOR > 0) ? rgb888to565(TIME_COLOR) : 0xFFFF;
   const int digitsX = OX + BOX_W + GAP;
+  matrix->fillRect(digitsX, 0, DIGITS_W, DIGITS_H, clockColor);
+
   for (int i = 0; i < 5; i++)
   {
     const int xx = digitsX + i * 7 - (i > 2 ? 2 : 0) - (i == 2);
-    matrix->drawBitmap(xx, 0, bigdigits_mask[t[i] - '0'], 6, 7, clockColor);
+    const int digit = t[i] - '0';
+    if (digit < 0 || digit > 11) continue;   // guard against malformed strftime output
+    const uint8_t *mask = bigdigits_mask[digit];
+    // Each mask row (7 total) covers 6 columns, bits MSB-first in each byte.
+    // Duplicate each row on the y axis to reach 14 rows total.
+    for (int row = 0; row < 7; row++)
+    {
+      const uint8_t byte = mask[row];
+      for (int col = 0; col < 6; col++)
+      {
+        if ((byte >> (7 - col)) & 1)
+        {
+          matrix->drawPixel(xx + col, row * 2,     (uint16_t)0);
+          matrix->drawPixel(xx + col, row * 2 + 1, (uint16_t)0);
+        }
+      }
+    }
   }
 }
 
-// Weekday line at y=9: 7 segments, current day highlighted. Uses
-// WDC_ACTIVE / WDC_INACTIVE from the classic weekday indicator.
+// Weekday line at y=17: 7 segments, current day highlighted.
 static void drawWeekdayLine(FastLED_NeoMatrix *matrix)
 {
   const uint8_t SEG_W = 6;
@@ -1306,7 +1318,7 @@ static void drawWeekdayLine(FastLED_NeoMatrix *matrix)
   const uint8_t COUNT = 7;
   const int stripW = COUNT * SEG_W + (COUNT - 1) * SEG_SPACING;   // 54
   const int START_X = (64 - stripW) / 2;                           // 5
-  const uint8_t Y = 9;
+  const uint8_t Y = 17;
   const uint8_t dayOffset = START_ON_MONDAY ? 0 : 1;
   const int today = (timer_localtime()->tm_wday + 6 + dayOffset) % 7;
   for (int i = 0; i < COUNT; i++)
