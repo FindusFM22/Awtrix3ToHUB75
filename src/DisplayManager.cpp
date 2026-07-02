@@ -1169,10 +1169,12 @@ void DisplayManager_::setup()
       /*D*/ 17,  /*E*/ -1,
       /*LAT*/ 4, /*OE*/ 15, /*CLK*/ 16};
   HUB75_I2S_CFG mxconfig(HUB75_PANEL_W, HUB75_PANEL_H, HUB75_PANEL_CHAIN, pins);
-  // Conservative driver default; flip clkphase or change driver type below if
-  // the panel shows ghosting or shifted colours.
+  mxconfig.driver = HUB75_I2S_CFG::ICN2038S;
   mxconfig.clkphase = true;
-  mxconfig.driver = HUB75_I2S_CFG::SHIFTREG;
+  mxconfig.latch_blanking = 4;
+  mxconfig.i2sspeed = HUB75_I2S_CFG::HZ_8M;
+  mxconfig.double_buff = true;
+
   dma_display = new MatrixPanel_I2S_DMA(mxconfig);
   dma_display->begin();
   // Blank the panel until main.cpp calls setBrightness(BRIGHTNESS) at the end
@@ -2083,6 +2085,7 @@ void DisplayManager_::blitToPanel()
       dma_display->drawPixelRGB888(x + ox, y + oy, r, g, b);
     }
   }
+  dma_display->flipDMABuffer();
 }
 #endif
 
