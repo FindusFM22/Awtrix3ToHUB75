@@ -1177,6 +1177,7 @@ void DisplayManager_::setup()
 
   dma_display = new MatrixPanel_I2S_DMA(mxconfig);
   dma_display->begin();
+
   // Blank the panel until main.cpp calls setBrightness(BRIGHTNESS) at the end
   // of setup(). Skipping an early setBrightness8 here avoids inconsistency
   // between the raw call and the DisplayManager wrapper.
