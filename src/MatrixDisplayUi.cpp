@@ -1270,12 +1270,33 @@ static void gridPageFullscreenClock(FastLED_NeoMatrix *matrix, GifPlayer *gifPla
 }
 
 // Page rotator: alternate between fullscreen clock and 2x2 grid every 5 s.
-// millis()/5000 & 1 → 0 (clock) or 1 (grid). Grid page uses the existing
-// gridSlots[] callbacks.
+// A 500 ms roll-down transition runs at the end of each page window:
+// the incoming page enters from the top and pushes the outgoing page
+// downwards off the panel.
 enum GridPage { PAGE_CLOCK = 0, PAGE_GRID = 1 };
-static GridPage currentPage()
+static constexpr uint32_t PAGE_DURATION_MS = 5000;
+static constexpr uint32_t TRANSITION_MS    = 500;
+
+// Renders a single page into leds[] via the matrix wrapper. matrix->clear()
+// is called first so the page starts on a blank canvas. Kept as a free
+// function (not a MatrixDisplayUi method) so it can be called twice in a
+// row during transitions without inheriting extra state.
+static void renderPage(GridPage page, FastLED_NeoMatrix *matrix,
+                       MatrixDisplayUiState *state)
 {
-  return ((millis() / 5000) % 2 == 0) ? PAGE_CLOCK : PAGE_GRID;
+  matrix->clear();
+  if (page == PAGE_CLOCK)
+  {
+    gridPageFullscreenClock(matrix, &gif1);
+  }
+  else
+  {
+    for (int i = 0; i < 4; i++)
+    {
+      const GridSlot &s = gridSlots[i];
+      s.callback(matrix, state, s.x, s.y, s.gif);
+    }
+  }
 }
 
 // Called from DisplayManager_::setup() once the app callbacks are known.
@@ -1300,23 +1321,73 @@ void MatrixDisplayUi::drawGrid()
 {
   if (!gridInitialised)
     return;
-  if (currentPage() == PAGE_CLOCK)
+
+  // Timing: which page owns this instant, and how deep are we into it?
+  const uint32_t t = millis();
+  const uint32_t cyc = t / PAGE_DURATION_MS;
+  const uint32_t posInPage = t % PAGE_DURATION_MS;
+  const GridPage nowPage = (cyc % 2 == 0) ? PAGE_CLOCK : PAGE_GRID;
+
+  // Transition runs during the LAST `TRANSITION_MS` of each page window:
+  // the incoming page (nextPage) slides in from the top and pushes the
+  // outgoing page (nowPage) downwards. Once we cross the page boundary the
+  // roles swap and rendering falls back to plain single-page mode.
+  const bool inTransition = (posInPage >= PAGE_DURATION_MS - TRANSITION_MS);
+  if (!inTransition)
   {
-    gridPageFullscreenClock(this->matrix, &gif1);
-    CURRENT_APP = "Clock";
+    // Steady state — render the current page directly into leds[].
+    renderPage(nowPage, this->matrix, &this->state);
+    CURRENT_APP = (nowPage == PAGE_CLOCK) ? "Clock" : "Grid";
+    currentCustomApp = "";
+    return;
   }
-  else
+
+  // Snapshot the outgoing page into a static buffer, then render the
+  // incoming page into leds[]. Both buffers are static so we don't pay
+  // heap allocation every transition frame.
+  //
+  // 2 * 64*32 * sizeof(CRGB) = 12 KB static — the panel is 64x32 on HUB75
+  // (MATRIX_WIDTH * MATRIX_HEIGHT = 2048). Guarded by DISPLAY_HUB75 already
+  // via the surrounding #ifdef so no waste on Ulanzi.
+  static CRGB pageOutBuf[64 * 32];
+  static CRGB pageInBuf[64 * 32];
+  CRGB *leds = DisplayManager.getLeds();
+
+  renderPage(nowPage, this->matrix, &this->state);
+  memcpy(pageOutBuf, leds, sizeof(pageOutBuf));
+
+  const GridPage nextPage = (nowPage == PAGE_CLOCK) ? PAGE_GRID : PAGE_CLOCK;
+  renderPage(nextPage, this->matrix, &this->state);
+  memcpy(pageInBuf, leds, sizeof(pageInBuf));
+
+  // Compute how many rows of the incoming page are visible from the top.
+  // Progress 0..1 mapped to 0..32 rows.
+  const uint32_t transElapsed = posInPage - (PAGE_DURATION_MS - TRANSITION_MS);
+  const int offset = (int)(((uint32_t)32 * transElapsed) / TRANSITION_MS);
+  const int clampedOffset = offset > 32 ? 32 : offset;
+
+  // Compose: leds[y*W + x] = pageInBuf[(32 - offset + y) * W + x]  if y < offset
+  //                        = pageOutBuf[(y - offset) * W + x]      otherwise
+  // Meaning: the incoming page enters from the top (its bottom rows are the
+  // first visible), and the outgoing page slides downwards until it falls
+  // off the bottom edge.
+  constexpr int W = 64;
+  constexpr int H = 32;
+  for (int y = 0; y < H; y++)
   {
-    for (int i = 0; i < 4; i++)
+    if (y < clampedOffset)
     {
-      const GridSlot &s = gridSlots[i];
-      s.callback(this->matrix, &this->state, s.x, s.y, s.gif);
+      const int srcY = (H - clampedOffset) + y;
+      memcpy(&leds[y * W], &pageInBuf[srcY * W], W * sizeof(CRGB));
     }
-    CURRENT_APP = "Grid";
+    else
+    {
+      const int srcY = y - clampedOffset;
+      memcpy(&leds[y * W], &pageOutBuf[srcY * W], W * sizeof(CRGB));
+    }
   }
-  // App callbacks each set CURRENT_APP to their own name as a side effect.
-  // In grid mode the value is meaningless — set a fixed label so MQTT
-  // consumers see "Grid" instead of a race between the four names.
+
+  CURRENT_APP = (nextPage == PAGE_CLOCK) ? "Clock" : "Grid";
   currentCustomApp = "";
 }
 #endif
