@@ -1223,32 +1223,20 @@ struct GridSlot
 static GridSlot gridSlots[4];
 static bool gridInitialised = false;
 
-// Fullscreen "big clock" page: shows the date at the top (WD DD.MM) and a
-// large HH:MM below it, using Adafruit_GFX's built-in font at size=2 so each
-// glyph is 12x16. The 5-char "HH:MM" is 60 px wide → fits 64 px with 2 px
-// margin. Uses setTextSize on the matrix directly (bypasses the custom
-// pixel-fonts used elsewhere) so the glyphs actually scale.
-static void gridPageFullscreenClock(FastLED_NeoMatrix *matrix, GifPlayer *gifPlayer)
+// Single-page layout on the 64x32 panel:
+//   Rows 0-13:  Large HH:MM at setTextSize(2) — 58 x 14 px, centred
+//   Row 14:     Weekday line (7 segments, current day highlighted)
+//   Rows 16-22: Calendar box (9x8) at left with day number, date text to the
+//               right ("WD DD.MM") — the "clock + date + icon" combo from the
+//               classic TimeApp, laid out as a strip under the big clock.
+//   Rows 24-31: Continuous left-scrolling marquee — indoor temp, outdoor
+//               temp (dynamic weather icon), humidity, UV index.
+//
+// Top block occupies ~22 rows (~69% of the panel); marquee occupies the
+// bottom 8 rows. Matches the "2/3 clock+date, 1/3 marquee" split.
+
+static void drawBigClock(FastLED_NeoMatrix *matrix)
 {
-  (void)gifPlayer;
-  matrix->fillScreen(0);
-
-  // --- Date row (small, top) ---
-  char date[16];
-  struct tm *now = timer_localtime();
-  const char *weekdays[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-  snprintf(date, sizeof(date), "%s %02d.%02d",
-           weekdays[now->tm_wday], now->tm_mday, now->tm_mon + 1);
-  const uint16_t dateW = (uint16_t)getTextWidth(date, 0);
-  const int dateX = (64 - (int)dateW) / 2;
-  if (DATE_COLOR > 0)
-    DisplayManager.setTextColor(DATE_COLOR);
-  else
-    DisplayManager.resetTextColor();
-  DisplayManager.setCursor(dateX, 6);
-  DisplayManager.matrixPrint(date);
-
-  // --- Time row (large, centred vertically in the lower half) ---
   const char *fmt = "%H:%M";
   if (TIME_FORMAT.length() >= 3 && TIME_FORMAT[2] == ' ')
     fmt = (timer_time() % 2) ? "%H %M" : "%H:%M";
@@ -1256,64 +1244,177 @@ static void gridPageFullscreenClock(FastLED_NeoMatrix *matrix, GifPlayer *gifPla
   strftime(clock, sizeof(clock), fmt, timer_localtime());
 
   if (TIME_COLOR > 0)
-    matrix->setTextColor(TIME_COLOR);
+  {
+    // TIME_COLOR is 0xRRGGBB; matrix->setTextColor wants 565.
+    uint8_t r = (TIME_COLOR >> 16) & 0xFF;
+    uint8_t g = (TIME_COLOR >> 8)  & 0xFF;
+    uint8_t b = (TIME_COLOR)       & 0xFF;
+    uint16_t c565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+    matrix->setTextColor(c565);
+  }
   else
-    matrix->setTextColor(0xFFFF);  // 16-bit white (matrix uses 565)
+  {
+    matrix->setTextColor(0xFFFF);
+  }
   matrix->setTextSize(2);
-  // "HH:MM" at size 2 = 5 * 6 * 2 - 1 * 2 = 58 px wide, 14 px tall.
-  // Center: x = (64-58)/2 = 3; y aligned so text baseline sits at row 24.
-  const int clockX = (64 - 58) / 2;
-  const int clockY = 14;
-  matrix->setCursor(clockX, clockY);
+  matrix->setCursor((64 - 58) / 2, 0);
   matrix->print(clock);
   matrix->setTextSize(1);
 }
 
-// Page rotator: alternate between fullscreen clock and 2x2 grid every 5 s.
-// A 500 ms roll-down transition runs at the end of each page window:
-// the incoming page enters from the top and pushes the outgoing page
-// downwards off the panel.
-enum GridPage { PAGE_CLOCK = 0, PAGE_GRID = 1 };
-static constexpr uint32_t PAGE_DURATION_MS = 8000;
-static constexpr uint32_t TRANSITION_MS    = 500;
-
-// Renders a single page into leds[] via the matrix wrapper. matrix->clear()
-// is called first so the page starts on a blank canvas. Kept as a free
-// function (not a MatrixDisplayUi method) so it can be called twice in a
-// row during transitions without inheriting extra state.
-static void renderPage(GridPage page, FastLED_NeoMatrix *matrix,
-                       MatrixDisplayUiState *state)
+// Weekday line at y=14: 7 segments spanning the panel width, current day
+// highlighted. Uses WDC_ACTIVE / WDC_INACTIVE from the classic TimeApp.
+static void drawWeekdayLine(FastLED_NeoMatrix *matrix)
 {
-  matrix->clear();
-  if (page == PAGE_CLOCK)
+  const uint8_t SEG_W = 6;
+  const uint8_t SEG_SPACING = 2;
+  const uint8_t START_X = 8;      // (64 - 7 * (SEG_W + SEG_SPACING) + SEG_SPACING) / 2 = 4; nudged to 8 for symmetry with calendar box below
+  const uint8_t Y = 14;
+  const uint8_t dayOffset = START_ON_MONDAY ? 0 : 1;
+  const int today = (timer_localtime()->tm_wday + 6 + dayOffset) % 7;
+  for (int i = 0; i <= 6; i++)
   {
-    gridPageFullscreenClock(matrix, &gif1);
+    const int x = START_X + i * (SEG_W + SEG_SPACING);
+    const uint32_t color = (i == today) ? WDC_ACTIVE : WDC_INACTIVE;
+    matrix->drawFastHLine(x, Y, SEG_W, color);
+  }
+}
+
+// Date row at y=16: 9x8 calendar box on the left with the day number, then
+// "WD DD.MM" text to its right. Mirrors TimeApp's TIME_MODE=1 look but at
+// a fixed panel position (not a slot).
+static void drawDateRow(FastLED_NeoMatrix *matrix)
+{
+  const int BOX_X = 0;
+  const int BOX_Y = 16;
+
+  // Calendar box: body + header stripe (same colors as TimeApp).
+  DisplayManager.drawFilledRect(BOX_X, BOX_Y, 9, 8, CALENDAR_BODY_COLOR);
+  DisplayManager.drawFilledRect(BOX_X, BOX_Y, 9, 2, CALENDAR_HEADER_COLOR);
+
+  // Day number inside the box.
+  struct tm *now = timer_localtime();
+  char dayStr[3];
+  snprintf(dayStr, sizeof(dayStr), "%d", now->tm_mday);
+  const int dayOffX = (now->tm_mday < 10) ? 3 : 1;
+  DisplayManager.setTextColor(CALENDAR_TEXT_COLOR);
+  DisplayManager.setCursor(BOX_X + dayOffX, BOX_Y + 7);
+  DisplayManager.matrixPrint(dayStr);
+
+  // Date text to the right of the box.
+  const char *weekdays[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+  char date[16];
+  snprintf(date, sizeof(date), "%s %02d.%02d",
+           weekdays[now->tm_wday], now->tm_mday, now->tm_mon + 1);
+  if (DATE_COLOR > 0)
+    DisplayManager.setTextColor(DATE_COLOR);
+  else
+    DisplayManager.resetTextColor();
+  const uint16_t textW = (uint16_t)getTextWidth(date, 0);
+  const int availW = 64 - 11;
+  const int textX = 11 + (availW - textW) / 2;
+  DisplayManager.setCursor(textX, BOX_Y + 6);
+  DisplayManager.matrixPrint(date);
+}
+
+// Marquee entry: an 8x8 icon (either a static const uint16_t[] pointer, or
+// a dynamic draw function for the outdoor weather GIF) plus a short text
+// label rendered with the AWTRIX pixel font.
+struct MarqueeItem
+{
+  const uint16_t *icon;   // nullptr → use drawDynamic instead
+  void (*drawDynamic)(FastLED_NeoMatrix *, GifPlayer *, int16_t, int16_t);
+  const char *text;
+  uint32_t color;
+};
+
+static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
+{
+  (void)state;
+
+  // Build value strings for this frame.
+  char inTxt[8], outTxt[8], humTxt[8], uvTxt[8];
+  {
+    char n[4];
+    gridFormatInt2((int)CURRENT_TEMP, n);
+    snprintf(inTxt, sizeof(inTxt), "%s%s", n, utf8ascii(IS_CELSIUS ? "°C" : "°F").c_str());
+  }
+  if (OUTDOOR_TEMP_VALID)
+  {
+    char n[4];
+    gridFormatInt2((int)OUTDOOR_TEMP, n);
+    snprintf(outTxt, sizeof(outTxt), "%s%s", n, utf8ascii(IS_CELSIUS ? "°C" : "°F").c_str());
   }
   else
   {
-    for (int i = 0; i < 4; i++)
+    snprintf(outTxt, sizeof(outTxt), "--");
+  }
+  {
+    char n[4];
+    gridFormatInt2((int)CURRENT_HUM, n);
+    snprintf(humTxt, sizeof(humTxt), "%s%%", n);
+  }
+  if (OUTDOOR_UV >= 0)
+    snprintf(uvTxt, sizeof(uvTxt), "UV%d", OUTDOOR_UV);
+  else
+    snprintf(uvTxt, sizeof(uvTxt), "UV?");
+
+  uint32_t uvColor;
+  if (OUTDOOR_UV < 0)         uvColor = 0x808080;
+  else if (OUTDOOR_UV <= 2)   uvColor = 0x00C800;
+  else if (OUTDOOR_UV <= 5)   uvColor = 0xFFC800;
+  else if (OUTDOOR_UV <= 7)   uvColor = 0xFF8000;
+  else if (OUTDOOR_UV <= 10)  uvColor = 0xFF0000;
+  else                        uvColor = 0xA000FF;
+
+  MarqueeItem items[] = {
+      {icon_234,  nullptr,                inTxt,  TEMP_COLOR},
+      {nullptr,   gridDrawOutdoorIcon,    outTxt, TEMP_COLOR},
+      {icon_2075, nullptr,                humTxt, HUM_COLOR},
+      {icon_234,  nullptr,                uvTxt,  uvColor},
+  };
+  const int itemCount = sizeof(items) / sizeof(items[0]);
+
+  const int ICON_TEXT_GAP = 2;
+  const int ITEM_GAP = 6;
+
+  int totalW = 0;
+  for (int i = 0; i < itemCount; i++)
+  {
+    totalW += 8 + ICON_TEXT_GAP + getTextWidth(items[i].text, 0) + ITEM_GAP;
+  }
+
+  // Time-based scroll: 25 px/sec (40 ms per pixel). Wraps modulo totalW so
+  // the marquee loops seamlessly.
+  const uint32_t period = (uint32_t)totalW * 40;
+  const int scrollOffset = (int)((millis() % period) / 40);
+
+  int cx = -scrollOffset;
+  const int y = 24;
+  for (int pass = 0; pass < 2 && cx < 64; pass++)
+  {
+    for (int i = 0; i < itemCount && cx < 64; i++)
     {
-      const GridSlot &s = gridSlots[i];
-      s.callback(matrix, state, s.x, s.y, s.gif);
+      const MarqueeItem &it = items[i];
+      const int textW = getTextWidth(it.text, 0);
+      const int itemW = 8 + ICON_TEXT_GAP + textW + ITEM_GAP;
+      if (cx + itemW > 0)
+      {
+        if (it.icon != nullptr)
+          matrix->drawRGBBitmap(cx, y, (uint16_t *)it.icon, 8, 8);
+        else if (it.drawDynamic != nullptr)
+          it.drawDynamic(matrix, &gif2, cx, y);
+        DisplayManager.setTextColor(it.color);
+        DisplayManager.setCursor(cx + 8 + ICON_TEXT_GAP, y + 6);
+        DisplayManager.matrixPrint(it.text);
+      }
+      cx += itemW;
     }
   }
 }
 
-// Called from DisplayManager_::setup() once the app callbacks are known.
-// Kept here rather than in DisplayManager.cpp so all grid layout constants
-// live in one place.
 void MatrixDisplayUi_initGrid()
 {
-  // Slot layout for the "grid" page:
-  //   TL: UV index   (the fullscreen page shows the clock — no need for
-  //                   a second clock in the corner)
-  //   TR: indoor temperature
-  //   BL: humidity
-  //   BR: outdoor temperature (dynamic weather icon)
-  gridSlots[0] = {0,  4,  gridWidgetUV,      &gif1};
-  gridSlots[1] = {32, 4,  gridWidgetTemp,    &gif2};
-  gridSlots[2] = {0,  20, gridWidgetHum,     &gif1};
-  gridSlots[3] = {32, 20, gridWidgetOutdoor, &gif2};
   gridInitialised = true;
 }
 
@@ -1321,73 +1422,12 @@ void MatrixDisplayUi::drawGrid()
 {
   if (!gridInitialised)
     return;
-
-  // Timing: which page owns this instant, and how deep are we into it?
-  const uint32_t t = millis();
-  const uint32_t cyc = t / PAGE_DURATION_MS;
-  const uint32_t posInPage = t % PAGE_DURATION_MS;
-  const GridPage nowPage = (cyc % 2 == 0) ? PAGE_CLOCK : PAGE_GRID;
-
-  // Transition runs during the LAST `TRANSITION_MS` of each page window:
-  // the incoming page (nextPage) slides in from the top and pushes the
-  // outgoing page (nowPage) downwards. Once we cross the page boundary the
-  // roles swap and rendering falls back to plain single-page mode.
-  const bool inTransition = (posInPage >= PAGE_DURATION_MS - TRANSITION_MS);
-  if (!inTransition)
-  {
-    // Steady state — render the current page directly into leds[].
-    renderPage(nowPage, this->matrix, &this->state);
-    CURRENT_APP = (nowPage == PAGE_CLOCK) ? "Clock" : "Grid";
-    currentCustomApp = "";
-    return;
-  }
-
-  // Snapshot the outgoing page into a static buffer, then render the
-  // incoming page into leds[]. Both buffers are static so we don't pay
-  // heap allocation every transition frame.
-  //
-  // 2 * 64*32 * sizeof(CRGB) = 12 KB static — the panel is 64x32 on HUB75
-  // (MATRIX_WIDTH * MATRIX_HEIGHT = 2048). Guarded by DISPLAY_HUB75 already
-  // via the surrounding #ifdef so no waste on Ulanzi.
-  static CRGB pageOutBuf[64 * 32];
-  static CRGB pageInBuf[64 * 32];
-  CRGB *leds = DisplayManager.getLeds();
-
-  renderPage(nowPage, this->matrix, &this->state);
-  memcpy(pageOutBuf, leds, sizeof(pageOutBuf));
-
-  const GridPage nextPage = (nowPage == PAGE_CLOCK) ? PAGE_GRID : PAGE_CLOCK;
-  renderPage(nextPage, this->matrix, &this->state);
-  memcpy(pageInBuf, leds, sizeof(pageInBuf));
-
-  // Compute how many rows of the incoming page are visible from the top.
-  // Progress 0..1 mapped to 0..32 rows.
-  const uint32_t transElapsed = posInPage - (PAGE_DURATION_MS - TRANSITION_MS);
-  const int offset = (int)(((uint32_t)32 * transElapsed) / TRANSITION_MS);
-  const int clampedOffset = offset > 32 ? 32 : offset;
-
-  // Compose: leds[y*W + x] = pageInBuf[(32 - offset + y) * W + x]  if y < offset
-  //                        = pageOutBuf[(y - offset) * W + x]      otherwise
-  // Meaning: the incoming page enters from the top (its bottom rows are the
-  // first visible), and the outgoing page slides downwards until it falls
-  // off the bottom edge.
-  constexpr int W = 64;
-  constexpr int H = 32;
-  for (int y = 0; y < H; y++)
-  {
-    if (y < clampedOffset)
-    {
-      const int srcY = (H - clampedOffset) + y;
-      memcpy(&leds[y * W], &pageInBuf[srcY * W], W * sizeof(CRGB));
-    }
-    else
-    {
-      const int srcY = y - clampedOffset;
-      memcpy(&leds[y * W], &pageOutBuf[srcY * W], W * sizeof(CRGB));
-    }
-  }
-
-  CURRENT_APP = (nextPage == PAGE_CLOCK) ? "Clock" : "Grid";
+  this->matrix->clear();
+  drawBigClock(this->matrix);
+  drawWeekdayLine(this->matrix);
+  drawDateRow(this->matrix);
+  drawMarquee(this->matrix, &this->state);
+  CURRENT_APP = "Home";
   currentCustomApp = "";
 }
 #endif
