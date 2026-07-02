@@ -43,8 +43,17 @@ int previousDataLength = 0;
 #define MATRIX_PIN 32
 #endif
 
+#ifdef DISPLAY_HUB75
+// HUB75 renders natively at panel resolution — all 2048 pixels addressable.
+// AWTRIX apps hard-code 32/8 constants and will render into the top-left
+// 32x8 region only; the rest of the panel is filled by whatever code
+// (future multi-app layout, direct matrix->drawPixel calls) targets it.
+#define MATRIX_WIDTH 64
+#define MATRIX_HEIGHT 32
+#else
 #define MATRIX_WIDTH 32
 #define MATRIX_HEIGHT 8
+#endif
 
 #ifdef DISPLAY_HUB75
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
@@ -68,7 +77,16 @@ int16_t cursor_x, cursor_y;
 uint32_t textColor;
 
 // NeoMatrix
+#ifdef DISPLAY_HUB75
+// HUB75 uses a flat single-tile wrapper matching the panel dimensions.
+// setMatrixLayout() is intentionally skipped in setup() for HUB75, so this
+// initial construction is the final wrapper — matrix->XY(x,y) resolves to
+// y*MATRIX_WIDTH + x, letting apps call matrix->drawPixel() natively over
+// the full panel. blitToPanel() copies leds[] to the DMA framebuffer 1:1.
+FastLED_NeoMatrix *matrix = new FastLED_NeoMatrix(leds, MATRIX_WIDTH, MATRIX_HEIGHT, NEO_MATRIX_TOP + NEO_MATRIX_LEFT + NEO_MATRIX_ROWS + NEO_MATRIX_PROGRESSIVE);
+#else
 FastLED_NeoMatrix *matrix = new FastLED_NeoMatrix(leds, 8, 8, 4, 1, NEO_MATRIX_TOP + NEO_MATRIX_LEFT + NEO_MATRIX_ROWS + NEO_MATRIX_PROGRESSIVE);
+#endif
 MatrixDisplayUi *ui = new MatrixDisplayUi(matrix);
 
 // Frame-end push helper. WS2812 path streams leds[] over the FastLED wire.
@@ -1170,7 +1188,7 @@ void DisplayManager_::setup()
       /*LAT*/ 4, /*OE*/ 15, /*CLK*/ 16};
   HUB75_I2S_CFG mxconfig(HUB75_PANEL_W, HUB75_PANEL_H, HUB75_PANEL_CHAIN, pins);
   mxconfig.driver = HUB75_I2S_CFG::ICN2038S;
-  mxconfig.clkphase = true;
+  mxconfig.clkphase = false;
   mxconfig.latch_blanking = 4;
   mxconfig.i2sspeed = HUB75_I2S_CFG::HZ_8M;
   mxconfig.double_buff = true;
@@ -1186,6 +1204,8 @@ void DisplayManager_::setup()
   // Skip setMatrixLayout — it is WS2812-tile-reorder logic that does not
   // apply to a natively addressed HUB75 panel and would destroy the matrix
   // pointer (see dangling-pointer note in the port plan).
+  DEBUG_PRINTF("HUB75 native %dx%d canvas ready. Free heap: %u bytes\n",
+               MATRIX_WIDTH, MATRIX_HEIGHT, (unsigned)ESP.getFreeHeap());
 #else
   FastLED.addLeds<NEOPIXEL, MATRIX_PIN>(leds, MATRIX_WIDTH * MATRIX_HEIGHT);
   setMatrixLayout(MATRIX_LAYOUT);
@@ -1742,6 +1762,13 @@ String DisplayManager_::getStats()
 
 void DisplayManager_::setMatrixLayout(int layout)
 {
+#ifdef DISPLAY_HUB75
+  // HUB75 uses a fixed native wrapper set up in the constructor. The WS2812
+  // tile-reorder layouts below would rebuild `matrix` at 32x8 or 8x8x4 and
+  // destroy the 64x32 canvas, so ignore layout changes on this build.
+  (void)layout;
+  return;
+#else
   delete matrix; // Free memory from the current matrix object
   if (DEBUG_MODE)
     DEBUG_PRINTF("Set matrix layout to %i", layout);
@@ -1767,6 +1794,7 @@ void DisplayManager_::setMatrixLayout(int layout)
 
   delete ui;                        // Free memory from the current ui object
   ui = new MatrixDisplayUi(matrix); // Create a new ui object with the new matrix
+#endif
 }
 
 String DisplayManager_::getAppsAsJson()
@@ -2055,18 +2083,33 @@ void DisplayManager_::gammaCorrection()
 }
 
 #ifdef DISPLAY_HUB75
-// Push the 32x8 logical CRGB shadow buffer onto the 64x32 HUB75 panel.
-// Uses matrix->width()/height() so ROTATE_SCREEN=true (which flips the
-// NeoMatrix wrapper to 8x32) still lands on the panel — offsets are
-// recomputed per frame so the rotated canvas centres correctly.
-// Reads leds[matrix->XY(x,y)] because FastLED_NeoMatrix stores tiles in
-// wire-order; skipping XY() would break the 4-tile Ulanzi layout too.
+// Fill-lock: when non-zero, blitToPanel() is suppressed and the panel keeps
+// showing whatever hub75FillTest() last drew. Value is the millis() deadline;
+// 0 means "no lock, resume normal app rendering".
+static uint32_t hub75FillLockUntil = 0;
+
+// Push the logical CRGB shadow buffer onto the HUB75 panel.
+// With MATRIX_WIDTH=64, MATRIX_HEIGHT=32 the canvas matches the panel 1:1 —
+// no scaling, no offset, every logical pixel is one physical pixel. `ox`/`oy`
+// resolve to 0 in the native case; the offset math is retained so a
+// ROTATE_SCREEN=true swap or a future smaller-canvas mode still centres.
+// Reads leds[matrix->XY(x,y)] because matrix is a FastLED_NeoMatrix wrapper;
+// on HUB75 the wrapper is a plain w*h linear mapping (see constructor).
 // Software colour correction + temperature is applied here because
 // FastLED.setCorrection is a no-op without addLeds().
 void DisplayManager_::blitToPanel()
 {
   if (!dma_display)
     return;
+  // Fill-lock: skip normal rendering while a hub75FillTest() lock is active.
+  // App/notify code keeps updating leds[] in the background; we just don't
+  // push it onto the panel. When the deadline passes, resume normally.
+  if (hub75FillLockUntil != 0)
+  {
+    if ((int32_t)(millis() - hub75FillLockUntil) < 0)
+      return;
+    hub75FillLockUntil = 0;
+  }
   const int w = matrix->width();
   const int h = matrix->height();
   const int ox = (HUB75_PANEL_W - w) / 2;
@@ -2087,6 +2130,127 @@ void DisplayManager_::blitToPanel()
     }
   }
   dma_display->flipDMABuffer();
+}
+
+// Debug: paint every panel pixel a single RGB colour, going straight to the
+// DMA buffer. Bypasses leds[], the app renderer, and any 32x8 clipping —
+// proves that all HUB75_PANEL_W * HUB75_PANEL_H pixels are addressable.
+// durationMs > 0 holds the fill by suppressing blitToPanel() until then;
+// 0 = one-shot flash (next frame from the app renderer overwrites it).
+void DisplayManager_::hub75FillTest(uint32_t rgb, uint32_t durationMs)
+{
+  if (!dma_display)
+    return;
+  const uint8_t r = (rgb >> 16) & 0xFF;
+  const uint8_t g = (rgb >> 8) & 0xFF;
+  const uint8_t b = rgb & 0xFF;
+  // With double_buff=true, fill both DMA buffers so the flip doesn't reveal
+  // stale content on the back buffer.
+  dma_display->fillScreenRGB888(r, g, b);
+  dma_display->flipDMABuffer();
+  dma_display->fillScreenRGB888(r, g, b);
+  dma_display->flipDMABuffer();
+  hub75FillLockUntil = durationMs ? (millis() + durationMs) : 0;
+}
+
+// Debug: fill the interior with `fill`, then overwrite the outermost 1-pixel
+// ring with `border`. Used by /api/hub75/border to confirm the extreme rows
+// and columns (y=0, y=PANEL_H-1, x=0, x=PANEL_W-1) are addressable.
+void DisplayManager_::hub75BorderTest(uint32_t fill, uint32_t border, uint32_t durationMs)
+{
+  if (!dma_display)
+    return;
+  const uint8_t fr = (fill >> 16) & 0xFF;
+  const uint8_t fg = (fill >> 8) & 0xFF;
+  const uint8_t fb = fill & 0xFF;
+  const uint8_t br = (border >> 16) & 0xFF;
+  const uint8_t bg = (border >> 8) & 0xFF;
+  const uint8_t bb = border & 0xFF;
+  auto paint = [&]() {
+    dma_display->fillScreenRGB888(fr, fg, fb);
+    // Top + bottom rows
+    for (int x = 0; x < HUB75_PANEL_W; x++)
+    {
+      dma_display->drawPixelRGB888(x, 0, br, bg, bb);
+      dma_display->drawPixelRGB888(x, HUB75_PANEL_H - 1, br, bg, bb);
+    }
+    // Left + right columns (excluding corners already done)
+    for (int y = 1; y < HUB75_PANEL_H - 1; y++)
+    {
+      dma_display->drawPixelRGB888(0, y, br, bg, bb);
+      dma_display->drawPixelRGB888(HUB75_PANEL_W - 1, y, br, bg, bb);
+    }
+  };
+  paint();
+  dma_display->flipDMABuffer();
+  paint();
+  dma_display->flipDMABuffer();
+  hub75FillLockUntil = durationMs ? (millis() + durationMs) : 0;
+}
+
+// Live-tune latch blanking. Higher pulses → less ghosting between rows,
+// slightly lower refresh rate. Library clamps to MAX_LAT_BLANKING.
+uint8_t DisplayManager_::hub75SetLatBlanking(uint8_t pulses)
+{
+  if (!dma_display)
+    return 0;
+  return dma_display->setLatBlanking(pulses);
+}
+
+// Debug: draw four 3x3 markers in the panel corners, each a different colour,
+// on a black background. Reveals pixel shift / stretch: if the top-right
+// marker is 4 pixels wide instead of 3, or the top-left is offset by 1 to
+// the right, the CLK phase / driver init is putting bits in the wrong place.
+// Layout:  TL=red   TR=green
+//          BL=blue  BR=yellow
+void DisplayManager_::hub75CornerTest(uint32_t durationMs)
+{
+  if (!dma_display)
+    return;
+  auto paint = [&]() {
+    dma_display->fillScreenRGB888(0, 0, 0);
+    for (int dy = 0; dy < 3; dy++)
+      for (int dx = 0; dx < 3; dx++)
+      {
+        // Top-left: red
+        dma_display->drawPixelRGB888(dx, dy, 255, 0, 0);
+        // Top-right: green
+        dma_display->drawPixelRGB888(HUB75_PANEL_W - 3 + dx, dy, 0, 255, 0);
+        // Bottom-left: blue
+        dma_display->drawPixelRGB888(dx, HUB75_PANEL_H - 3 + dy, 0, 0, 255);
+        // Bottom-right: yellow
+        dma_display->drawPixelRGB888(HUB75_PANEL_W - 3 + dx, HUB75_PANEL_H - 3 + dy, 255, 255, 0);
+      }
+  };
+  paint();
+  dma_display->flipDMABuffer();
+  paint();
+  dma_display->flipDMABuffer();
+  hub75FillLockUntil = durationMs ? (millis() + durationMs) : 0;
+}
+
+// Debug: light a single pixel at (x,y). Used to check individual pixels
+// after a corner-marker test reveals one is missing.
+void DisplayManager_::hub75Pixel(int x, int y, uint32_t rgb, uint32_t durationMs)
+{
+  if (!dma_display)
+    return;
+  if (x < 0) x = 0;
+  if (y < 0) y = 0;
+  if (x >= HUB75_PANEL_W) x = HUB75_PANEL_W - 1;
+  if (y >= HUB75_PANEL_H) y = HUB75_PANEL_H - 1;
+  const uint8_t r = (rgb >> 16) & 0xFF;
+  const uint8_t g = (rgb >> 8) & 0xFF;
+  const uint8_t b = rgb & 0xFF;
+  auto paint = [&]() {
+    dma_display->fillScreenRGB888(0, 0, 0);
+    dma_display->drawPixelRGB888(x, y, r, g, b);
+  };
+  paint();
+  dma_display->flipDMABuffer();
+  paint();
+  dma_display->flipDMABuffer();
+  hub75FillLockUntil = durationMs ? (millis() + durationMs) : 0;
 }
 #endif
 
@@ -2378,7 +2542,10 @@ void DisplayManager_::setCustomAppColors(uint32_t color)
 
 String DisplayManager_::ledsAsJson()
 {
-  StaticJsonDocument<JSON_ARRAY_SIZE(MATRIX_WIDTH * MATRIX_HEIGHT)> jsonDoc;
+  // Dynamic (heap) instead of Static (stack) — at 64x32 the required size is
+  // ~32 KB, which would overflow the stack when this is called from the
+  // web server task.
+  DynamicJsonDocument jsonDoc(JSON_ARRAY_SIZE(MATRIX_WIDTH * MATRIX_HEIGHT) + 64);
   JsonArray jsonColors = jsonDoc.to<JsonArray>();
   for (int y = 0; y < MATRIX_HEIGHT; y++)
   {

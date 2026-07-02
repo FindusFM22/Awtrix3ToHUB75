@@ -1,7 +1,15 @@
 #include "effects.h"
 
+// Effect buffers stay 32x8 even on HUB75. The effect loops themselves
+// iterate 32x8 (Ulanzi-native), so the visible effect region is confined
+// to the top-left 32x8 of the panel. Sizing the buffers to full 64x32
+// pushes DRAM over the ESP32 segment limit (5 static [64][32] arrays
+// including Particle stars overflowed .dram0.bss by ~22 KB).
+#define EFFECT_BUF_W 32
+#define EFFECT_BUF_H 8
+
 const CRGBPalette16 palette = RainbowColors_p;
-CRGB tempLeds[32][8];
+CRGB tempLeds[EFFECT_BUF_W][EFFECT_BUF_H];
 
 void Pacifica(FastLED_NeoMatrix *matrix, int16_t x, int16_t y, EffectSettings *settings)
 {
@@ -86,7 +94,7 @@ void Matrix(FastLED_NeoMatrix *matrix, int16_t x, int16_t y, EffectSettings *set
     static uint8_t intensity = 8; // Adjust to manage the frequency of new "drops"
 
     // Create a static matrix to hold the state of each pixel
-    static CRGB ledState[32][8];
+    static CRGB ledState[EFFECT_BUF_W][EFFECT_BUF_H];
 
     uint8_t baseSpeed = 180;                            // Base value for speed calculation
     uint8_t speed = baseSpeed - (settings->speed * 15); // Adjust speed based on settings
@@ -214,7 +222,7 @@ struct Particle
     float brightness;
 };
 
-Particle stars[32][8]; // Create a buffer to store the state of the LEDs
+Particle stars[EFFECT_BUF_W][EFFECT_BUF_H]; // Create a buffer to store the state of the LEDs
 
 void TwinklingStars(FastLED_NeoMatrix *matrix, int16_t x, int16_t y, EffectSettings *settings)
 {
@@ -1233,11 +1241,11 @@ OverlayEffect getOverlay(String overlay)
 
 void EffectOverlay(FastLED_NeoMatrix *matrix, int16_t x, int16_t y, OverlayEffect effect)
 {
-    static CRGB leds[32][8] = {CRGB::Black}; // Initialize all LEDs to black
-    static int colorChanges[32][8] = {0};
+    static CRGB leds[EFFECT_BUF_W][EFFECT_BUF_H] = {CRGB::Black}; // Initialize all LEDs to black
+    static int colorChanges[EFFECT_BUF_W][EFFECT_BUF_H] = {0};
     static bool lightning = false;                // Track whether lightning is happening
     static unsigned long lastLightningMillis = 0; // Store last time lightning happened
-    static unsigned long lastUpdate[32][8] = {0}; // Store the last update time for each LED
+    static unsigned long lastUpdate[EFFECT_BUF_W][EFFECT_BUF_H] = {0}; // Store the last update time for each LED
     static int lightningDuration = 50;            // Duration of lightning flash in milliseconds
     static int updateFrame = 0;                   // Counter to control the update rate of the display
     static int windFrame = 0;                     // Additional variable for wind logic during storms

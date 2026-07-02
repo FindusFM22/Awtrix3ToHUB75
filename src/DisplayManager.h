@@ -70,9 +70,30 @@ public:
     void reorderApps(const String &jsonString);
     void gammaCorrection();
 #ifdef DISPLAY_HUB75
-    // Pushes the 32x8 logical CRGB shadow buffer onto the 64x32 HUB75 panel,
-    // centred with HUB75_OFFSET_X/Y. Replaces matrix->show() in the render path.
+    // Pushes the logical CRGB shadow buffer onto the HUB75 panel. On native
+    // 64x32 canvas this is a 1:1 copy; older 32x8 canvas builds would centre.
     void blitToPanel();
+    // Debug helper: paint every physical pixel a single colour, bypassing
+    // the app renderer. Used by /api/hub75/fill to verify full addressability.
+    // durationMs > 0 holds the fill by suppressing blitToPanel() for that
+    // many ms; 0 = one-shot flash overwritten by the next app frame.
+    void hub75FillTest(uint32_t rgb, uint32_t durationMs = 0);
+    // Debug helper: paint interior with `fill` and the outermost 1-pixel
+    // ring with `border`. Confirms the extreme rows/columns (0 and PANEL-1)
+    // are addressable — a common failure mode with mis-timed HUB75 panels.
+    void hub75BorderTest(uint32_t fill, uint32_t border, uint32_t durationMs = 0);
+    // Live tuning: adjust latch_blanking after begin() to reduce ghosting.
+    // Returns the value the library actually applied (may be clamped).
+    uint8_t hub75SetLatBlanking(uint8_t pulses);
+    // Debug helper: paint 3x3 markers in the four panel corners, each a
+    // different colour. Lets a visual check confirm whether extreme pixels
+    // land where expected or are offset/stretched.
+    // TL=red, TR=green, BL=blue, BR=yellow.
+    void hub75CornerTest(uint32_t durationMs = 0);
+    // Debug helper: light a single pixel at (x,y) with given RGB, rest black.
+    // Used to check individual pixel addressability (e.g. missing pixel in a
+    // corner marker). Coordinates clamped to panel bounds.
+    void hub75Pixel(int x, int y, uint32_t rgb, uint32_t durationMs = 0);
 #endif
     bool indicatorParser(uint8_t indicator, const char *json);
     void showSleepAnimation();

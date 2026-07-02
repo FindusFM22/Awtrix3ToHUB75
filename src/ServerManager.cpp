@@ -88,6 +88,61 @@ void addHandler()
                    { mws.webserver->send_P(200, "application/json", DisplayManager.getTransitionNames().c_str()); });
     mws.addHandler("/api/reboot", HTTP_ANY, []()
                    { mws.webserver->send(200,F("text/plain"),F("OK")); delay(200); ESP.restart(); });
+#ifdef DISPLAY_HUB75
+    // Debug: paint the full native panel a single colour to verify every
+    // pixel is addressable. Bypasses the app renderer and its 32x8 clip.
+    // Usage: POST /api/hub75/fill?c=00FF00&d=60000 (hex RRGGBB, hold ms)
+    mws.addHandler("/api/hub75/fill", HTTP_ANY, []()
+                   {
+                       String c = mws.webserver->hasArg("c") ? mws.webserver->arg("c") : "FFFFFF";
+                       uint32_t rgb = strtoul(c.c_str(), nullptr, 16);
+                       uint32_t dur = mws.webserver->hasArg("d") ? mws.webserver->arg("d").toInt() : 60000;
+                       DisplayManager.hub75FillTest(rgb, dur);
+                       mws.webserver->send(200, F("text/plain"), F("OK"));
+                   });
+    // Debug: interior fill + 1-pixel border.
+    // Usage: POST /api/hub75/border?c=0000FF&b=FFFFFF&d=60000
+    mws.addHandler("/api/hub75/border", HTTP_ANY, []()
+                   {
+                       String c = mws.webserver->hasArg("c") ? mws.webserver->arg("c") : "0000FF";
+                       String bC = mws.webserver->hasArg("b") ? mws.webserver->arg("b") : "FFFFFF";
+                       uint32_t fill = strtoul(c.c_str(), nullptr, 16);
+                       uint32_t border = strtoul(bC.c_str(), nullptr, 16);
+                       uint32_t dur = mws.webserver->hasArg("d") ? mws.webserver->arg("d").toInt() : 60000;
+                       DisplayManager.hub75BorderTest(fill, border, dur);
+                       mws.webserver->send(200, F("text/plain"), F("OK"));
+                   });
+    // Debug: adjust HUB75 latch blanking at runtime to tune ghosting.
+    // Higher values (up to library max) blank OE longer around LAT, reducing
+    // bleed between rows at a small refresh-rate cost. Usage:
+    //   POST /api/hub75/lat?n=4
+    mws.addHandler("/api/hub75/lat", HTTP_ANY, []()
+                   {
+                       int n = mws.webserver->hasArg("n") ? mws.webserver->arg("n").toInt() : 4;
+                       uint8_t got = DisplayManager.hub75SetLatBlanking((uint8_t)n);
+                       String reply = String("latch_blanking=") + got;
+                       mws.webserver->send(200, F("text/plain"), reply);
+                   });
+    // Debug: 3x3 corner markers (TL=red, TR=green, BL=blue, BR=yellow) on black.
+    // Reveals pixel-shift / stretch bugs. Usage: POST /api/hub75/corners?d=60000
+    mws.addHandler("/api/hub75/corners", HTTP_ANY, []()
+                   {
+                       uint32_t dur = mws.webserver->hasArg("d") ? mws.webserver->arg("d").toInt() : 60000;
+                       DisplayManager.hub75CornerTest(dur);
+                       mws.webserver->send(200, F("text/plain"), F("OK"));
+                   });
+    // Debug: light single pixel. Usage: POST /api/hub75/px?x=0&y=29&c=FFFFFF&d=60000
+    mws.addHandler("/api/hub75/px", HTTP_ANY, []()
+                   {
+                       int x = mws.webserver->hasArg("x") ? mws.webserver->arg("x").toInt() : 0;
+                       int y = mws.webserver->hasArg("y") ? mws.webserver->arg("y").toInt() : 0;
+                       String c = mws.webserver->hasArg("c") ? mws.webserver->arg("c") : "FFFFFF";
+                       uint32_t rgb = strtoul(c.c_str(), nullptr, 16);
+                       uint32_t dur = mws.webserver->hasArg("d") ? mws.webserver->arg("d").toInt() : 60000;
+                       DisplayManager.hub75Pixel(x, y, rgb, dur);
+                       mws.webserver->send(200, F("text/plain"), F("OK"));
+                   });
+#endif
     mws.addHandler("/api/rtttl", HTTP_POST, []()
                    { mws.webserver->send(200,F("text/plain"),F("OK")); PeripheryManager.playRTTTLString(mws.webserver->arg("plain").c_str()); });
     mws.addHandler("/api/sound", HTTP_POST, []()
