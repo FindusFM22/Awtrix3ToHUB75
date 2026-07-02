@@ -35,6 +35,7 @@
 #include "Apps.h"      // TimeApp, TempApp, HumApp, OutdoorApp
 #include "icons.h"     // built-in fallback icons for grid widgets
 #include "Functions.h" // getTextWidth
+#include "timer.h"     // timer_localtime, timer_time for the time widget
 #include <LittleFS.h>
 #endif
 
@@ -999,6 +1000,33 @@ static void gridFormatInt2(int value, char *out)
     }
 }
 
+// Time widget: HH:MM only, centred in the 32-wide slot. No calendar box,
+// no weekday bar — keeps the TL quadrant visually balanced with the other
+// three widgets. Colon blinks once per second when TIME_FORMAT uses a
+// space separator (mirrors TimeApp's behaviour for %H %M).
+static void gridWidgetTime(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state,
+                           int16_t x, int16_t y, GifPlayer *gifPlayer)
+{
+    (void)state; (void)gifPlayer;
+    // Force HH:MM regardless of TIME_FORMAT/TIME_MODE — the classic app has
+    // %I/%p variants and seconds, but at 5-char width they wouldn't fit
+    // neatly in 32px anyway.
+    const bool blink = (TIME_FORMAT.length() >= 3 && TIME_FORMAT[2] == ' ');
+    const char *fmt = (blink && (timer_time() % 2)) ? "%H %M" : "%H:%M";
+    char buf[8];
+    strftime(buf, sizeof(buf), fmt, timer_localtime());
+
+    if (TIME_COLOR > 0)
+        DisplayManager.setTextColor(TIME_COLOR);
+    else
+        DisplayManager.resetTextColor();
+
+    const uint16_t textW = (uint16_t)getTextWidth(buf, 0);
+    const int ox = x + (32 - textW) / 2;
+    DisplayManager.setCursor(ox, y + 6);
+    DisplayManager.matrixPrint(buf);
+}
+
 // Draw an 8x8 icon + text label horizontally centred inside a 32x16 slot.
 // The icon+text pair together occupies (8 + gap + textWidth). The x offset
 // is (32 - contentWidth) / 2, so the whole widget sits centred regardless
@@ -1172,9 +1200,9 @@ static bool gridInitialised = false;
 // live in one place.
 void MatrixDisplayUi_initGrid()
 {
-  gridSlots[0] = {0,  4,  TimeApp,          &gif1};
-  gridSlots[1] = {32, 4,  gridWidgetTemp,   &gif2};
-  gridSlots[2] = {0,  20, gridWidgetHum,    &gif1};
+  gridSlots[0] = {0,  4,  gridWidgetTime,    &gif1};
+  gridSlots[1] = {32, 4,  gridWidgetTemp,    &gif2};
+  gridSlots[2] = {0,  20, gridWidgetHum,     &gif1};
   gridSlots[3] = {32, 20, gridWidgetOutdoor, &gif2};
   gridInitialised = true;
 }
