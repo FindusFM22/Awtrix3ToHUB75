@@ -524,7 +524,12 @@ static String weatherTextToIconSlug(const String &raw)
     String s = raw;
     s.toLowerCase();
     if (s.indexOf("thunder") >= 0 || s.indexOf("storm") >= 0) return "storm";
-    if (s.indexOf("snow") >= 0 || s.indexOf("blizzard") >= 0 || s.indexOf("sleet") >= 0) return "snow";
+    // Sleet must be checked before generic "snow"/"rain" — otherwise "rain and
+    // snow" or "sleet" would resolve to plain snow or rain.
+    if (s.indexOf("sleet") >= 0
+        || (s.indexOf("rain") >= 0 && s.indexOf("snow") >= 0))
+        return "sleet";
+    if (s.indexOf("snow") >= 0 || s.indexOf("blizzard") >= 0) return "snow";
     if (s.indexOf("rain") >= 0 || s.indexOf("shower") >= 0 || s.indexOf("drizzle") >= 0) return "rain";
     if (s.indexOf("fog") >= 0 || s.indexOf("mist") >= 0 || s.indexOf("haze") >= 0 || s.indexOf("smog") >= 0) return "fog";
     if (s.indexOf("partly") >= 0) return "partlycloudy";

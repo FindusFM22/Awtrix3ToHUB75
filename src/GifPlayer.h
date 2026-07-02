@@ -13,10 +13,17 @@ public:
 #define WIDTH 32
 #define HEIGHT 8
   uint8_t currentFrame;
+  // Per-frame delay in ms. Populated from the GIF's Graphic Control Extension
+  // during parseGifHeader(); callers may overwrite AFTER the first playGif()
+  // call to slow down animations authored with very short delays.
+  int newframeDelay;
+  // Minimum frame delay in ms. Any GIF whose GCE specifies a shorter delay
+  // is clamped up to this value on every parse. Set on the GifPlayer
+  // instance before playGif() to control per-instance animation speed.
+  int minFrameDelay = 0;
 
 private:
   long lastFrameTime;
-  int newframeDelay;
   CRGB FrameBuffer[HEIGHT][WIDTH];
   bool lastFrameDrawn = false;
   unsigned long nextFrameTime = 0;
@@ -303,6 +310,13 @@ public:
       frameDelay = 1;
     }
     newframeDelay = frameDelay * 10;
+    // Callers can set minFrameDelay on the instance to slow down GIFs that
+    // were authored with short delays. Clamp here so the value survives
+    // every parseGraphicControlExtension() call, not just the first.
+    if (minFrameDelay > 0 && newframeDelay < minFrameDelay)
+    {
+      newframeDelay = minFrameDelay;
+    }
     return frameDelay * 10;
   }
 

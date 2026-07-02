@@ -414,10 +414,27 @@ void BatApp(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state, int16_t x, i
 #endif
 
 #ifdef HAS_OUTDOOR_WEATHER
+// Weather-slug → LaMetric icon ID. The user uploads each icon via the AWTRIX
+// web UI which saves it under its LaMetric ID (e.g. /ICONS/11201.gif); the
+// slug comes from PeripheryManager::weatherTextToIconSlug(). Change these IDs
+// to swap in different weather icons without touching the fetcher or app.
+static const char *iconIdForSlug(const String &slug)
+{
+    if (slug == "clear")        return "11201";  // sunny-animated
+    if (slug == "partlycloudy") return "876";    // PartlyCloudy
+    if (slug == "cloudy")       return "12246";  // Animated cloud
+    if (slug == "rain")         return "72";     // Rain
+    if (slug == "sleet")        return "160";    // Rain+snow
+    if (slug == "snow")         return "4702";   // Snowfall
+    if (slug == "storm")        return "11428";  // thunderstorm
+    if (slug == "fog")          return "12196";  // Fog
+    return nullptr;  // "unknown" and any future slug → fallback
+}
+
 // Render outdoor temperature (from wttr.in) with a weather-appropriate icon.
-// Icon strategy: look for /ICONS/<OUTDOOR_ICON>.jpg or .gif in LittleFS; if
-// present, draw that. Otherwise fall back to the built-in sun icon (icon_234)
-// so the app still shows something even before the user uploads custom icons.
+// Icon strategy: look up the LaMetric icon ID for the current weather slug,
+// then try /ICONS/<id>.jpg then .gif in LittleFS. Falls back to the built-in
+// sun icon (icon_234) if no matching file exists.
 // If OUTDOOR_TEMP_VALID is false (no successful fetch yet) the app draws
 // nothing — that keeps a stale zero from appearing at boot.
 void OutdoorApp(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state, int16_t x, int16_t y, GifPlayer *gifPlayer)
@@ -433,18 +450,51 @@ void OutdoorApp(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state, int16_t 
     else
         DisplayManager.getInstance().resetTextColor();
 
-    // Try LittleFS icon first, else fall back to the built-in sun icon.
-    // File handle is scoped to this call — TJpgDec streams the whole image
-    // synchronously, so a per-frame reopen has no visible cost.
+    // Look up the LaMetric ID for the current slug, then try both file
+    // extensions. TJpgDec / GifPlayer stream synchronously, so opening the
+    // file per frame has no visible cost for a static 8x8 icon.
+    //
+    // GIF handling: we keep the file handle across calls (reopen only when
+    // the slug changes). Many LaMetric weather GIFs are authored with very
+    // short frame delays (30-80 ms) that look like fast strobing on our
+    // panel — we clamp GifPlayer::newframeDelay to at least ICON_MIN_MS
+    // after the first playGif() call has parsed the header.
+    static fs::File cachedIconFile;
+    static String cachedIconSlug = "";
+    const int ICON_MIN_MS = 500;
+
     bool iconDrawn = false;
-    const String basePath = "/ICONS/" + OUTDOOR_ICON;
-    if (LittleFS.exists(basePath + ".jpg"))
+    const char *iconId = iconIdForSlug(OUTDOOR_ICON);
+    if (iconId != nullptr)
     {
-        fs::File f = LittleFS.open(basePath + ".jpg");
-        if (f)
+        const String basePath = String("/ICONS/") + iconId;
+        // Reopen only when the slug changed or the last open failed.
+        if (cachedIconSlug != OUTDOOR_ICON || !cachedIconFile)
         {
-            DisplayManager.drawJPG(x, y, f);
-            f.close();
+            if (cachedIconFile) cachedIconFile.close();
+            cachedIconSlug = OUTDOOR_ICON;
+            if (LittleFS.exists(basePath + ".jpg"))
+                cachedIconFile = LittleFS.open(basePath + ".jpg");
+            else if (LittleFS.exists(basePath + ".gif"))
+                cachedIconFile = LittleFS.open(basePath + ".gif");
+        }
+        if (cachedIconFile)
+        {
+            const String name = cachedIconFile.name();
+            if (name.endsWith(".jpg"))
+            {
+                DisplayManager.drawJPG(x, y, cachedIconFile);
+                cachedIconFile.seek(0);
+            }
+            else
+            {
+                // Slow LaMetric weather GIFs (often authored with 30–80 ms
+                // frames that strobe on our panel). GifPlayer::minFrameDelay
+                // is honoured on every parseGraphicControlExtension() call,
+                // so the clamp survives across frames.
+                gifPlayer->minFrameDelay = ICON_MIN_MS;
+                gifPlayer->playGif(x, y, &cachedIconFile);
+            }
             iconDrawn = true;
         }
     }
