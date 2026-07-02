@@ -32,6 +32,7 @@
   // Custom HUB75 build (ESP32 DevKit V1 + HUB75 P2.5 64x32 + BME280 + LDR).
   // Bedroom dashboard: silent, no buttons, no buzzer, no battery, no DFPlayer.
   #define DISPLAY_HUB75
+  #define HAS_OUTDOOR_WEATHER  // wttr.in-based outdoor temp/weather-icon fetch
   // No HAS_BUTTONS, HAS_BUZZER, HAS_BATTERY, HAS_DFPLAYER.
 
 #else

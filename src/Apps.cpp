@@ -413,6 +413,67 @@ void BatApp(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state, int16_t x, i
 }
 #endif
 
+#ifdef HAS_OUTDOOR_WEATHER
+// Render outdoor temperature (from wttr.in) with a weather-appropriate icon.
+// Icon strategy: look for /ICONS/<OUTDOOR_ICON>.jpg or .gif in LittleFS; if
+// present, draw that. Otherwise fall back to the built-in sun icon (icon_234)
+// so the app still shows something even before the user uploads custom icons.
+// If OUTDOOR_TEMP_VALID is false (no successful fetch yet) the app draws
+// nothing — that keeps a stale zero from appearing at boot.
+void OutdoorApp(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state, int16_t x, int16_t y, GifPlayer *gifPlayer)
+{
+    if (notifyFlag)
+        return;
+    if (!OUTDOOR_TEMP_VALID)
+        return;
+    CURRENT_APP = "Outdoor";
+    currentCustomApp = "";
+    if (TEMP_COLOR > 0)
+        DisplayManager.setTextColor(TEMP_COLOR);
+    else
+        DisplayManager.getInstance().resetTextColor();
+
+    // Try LittleFS icon first, else fall back to the built-in sun icon.
+    // File handle is scoped to this call — TJpgDec streams the whole image
+    // synchronously, so a per-frame reopen has no visible cost.
+    bool iconDrawn = false;
+    const String basePath = "/ICONS/" + OUTDOOR_ICON;
+    if (LittleFS.exists(basePath + ".jpg"))
+    {
+        fs::File f = LittleFS.open(basePath + ".jpg");
+        if (f)
+        {
+            DisplayManager.drawJPG(x, y, f);
+            f.close();
+            iconDrawn = true;
+        }
+    }
+    if (!iconDrawn)
+        matrix->drawRGBBitmap(x, y, icon_234, 8, 8);
+
+    // Match TempApp: 1 decimal shifts the cursor 4 px left to keep the
+    // whole "-12.3°C" string within the 32 px available at 32x8-canvas
+    // rendering. On HUB75 the app still uses the 32x8 slot; a future
+    // multi-widget layout can position with x/y from the caller.
+    if (TEMP_DECIMAL_PLACES > 0)
+        DisplayManager.setCursor(8 + x, 6 + y);
+    else
+        DisplayManager.setCursor(12 + x, 6 + y);
+
+    if (IS_CELSIUS)
+    {
+        DisplayManager.matrixPrint(OUTDOOR_TEMP, TEMP_DECIMAL_PLACES);
+        DisplayManager.matrixPrint(utf8ascii("°C"));
+    }
+    else
+    {
+        double tempF = (OUTDOOR_TEMP * 9 / 5) + 32;
+        DisplayManager.matrixPrint(tempF, TEMP_DECIMAL_PLACES);
+        DisplayManager.matrixPrint(utf8ascii("°F"));
+    }
+}
+#endif
+
 String replacePlaceholders(String text)
 {
     int start = 0;

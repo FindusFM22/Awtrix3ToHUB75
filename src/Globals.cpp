@@ -283,6 +283,11 @@ void loadSettings()
     SHOW_DATE = Settings.getBool("DAT", false);
     SHOW_TEMP = Settings.getBool("TEMP", true);
     SHOW_HUM = Settings.getBool("HUM", true);
+#ifdef HAS_OUTDOOR_WEATHER
+    SHOW_OUTDOOR = Settings.getBool("SHOW_OUT", true);
+    OUTDOOR_LAT = Settings.getFloat("WTR_LAT", 49.0069f);
+    OUTDOOR_LON = Settings.getFloat("WTR_LON", 8.4037f);
+#endif
     MATRIX_LAYOUT = Settings.getUInt("MAT", 0);
     SCROLL_SPEED = Settings.getUInt("SSPEED", 100);
 #ifdef HAS_BATTERY
@@ -333,6 +338,11 @@ void saveSettings()
     Settings.putBool("DAT", SHOW_DATE);
     Settings.putBool("TEMP", SHOW_TEMP);
     Settings.putBool("HUM", SHOW_HUM);
+#ifdef HAS_OUTDOOR_WEATHER
+    Settings.putBool("SHOW_OUT", SHOW_OUTDOOR);
+    Settings.putFloat("WTR_LAT", OUTDOOR_LAT);
+    Settings.putFloat("WTR_LON", OUTDOOR_LON);
+#endif
     Settings.putUInt("SSPEED", SCROLL_SPEED);
 #ifdef HAS_BATTERY
     Settings.putBool("BAT", SHOW_BAT);
@@ -362,6 +372,14 @@ bool SHOW_WEATHER = true;
 bool SHOW_BAT = true;
 bool SHOW_TEMP = true;
 bool SHOW_HUM = true;
+#ifdef HAS_OUTDOOR_WEATHER
+float OUTDOOR_TEMP = 0.0f;
+bool  OUTDOOR_TEMP_VALID = false;
+float OUTDOOR_LAT = 49.0069f;  // Karlsruhe
+float OUTDOOR_LON = 8.4037f;
+String OUTDOOR_ICON = "unknown";
+bool  SHOW_OUTDOOR = true;
+#endif
 bool SHOW_SECONDS = true;
 bool SHOW_WEEKDAY = true;
 String NET_IP = "192.168.178.10";

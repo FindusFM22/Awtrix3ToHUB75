@@ -1168,6 +1168,9 @@ void DisplayManager_::loadNativeApps()
 #ifdef HAS_BATTERY
   updateApp("Battery", BatApp, SHOW_BAT, 4);
 #endif
+#ifdef HAS_OUTDOOR_WEATHER
+  updateApp("Outdoor", OutdoorApp, SHOW_OUTDOOR, 5);
+#endif
 
   ui->setApps(Apps);
   setAutoTransition(true);
@@ -1640,6 +1643,12 @@ std::pair<String, AppCallback> getNativeAppByName(const String &appName)
   else if (appName == "Battery")
   {
     return std::make_pair("Battery", BatApp);
+  }
+#endif
+#ifdef HAS_OUTDOOR_WEATHER
+  else if (appName == "Outdoor")
+  {
+    return std::make_pair("Outdoor", OutdoorApp);
   }
 #endif
   return std::make_pair("", nullptr);
@@ -2461,6 +2470,14 @@ String DisplayManager_::getSettings()
   doc["HUM"] = SHOW_HUM;
   doc["TEMP"] = SHOW_TEMP;
   doc["BAT"] = SHOW_BAT;
+#ifdef HAS_OUTDOOR_WEATHER
+  doc["SHOW_OUT"] = SHOW_OUTDOOR;
+  doc["WTR_LAT"] = OUTDOOR_LAT;
+  doc["WTR_LON"] = OUTDOOR_LON;
+  doc["OUT_T"] = OUTDOOR_TEMP;
+  doc["OUT_TV"] = OUTDOOR_TEMP_VALID;
+  doc["OUT_ICO"] = OUTDOOR_ICON;
+#endif
   doc["VOL"] = SOUND_VOLUME;
   doc["OVERLAY"] = getOverlayName();
   String jsonString;
@@ -2535,6 +2552,11 @@ void DisplayManager_::setNewSettings(const char *json)
   SHOW_HUM = doc.containsKey("HUM") ? doc["HUM"].as<bool>() : SHOW_HUM;
   SHOW_TEMP = doc.containsKey("TEMP") ? doc["TEMP"].as<bool>() : SHOW_TEMP;
   SHOW_BAT = doc.containsKey("BAT") ? doc["BAT"].as<bool>() : SHOW_BAT;
+#ifdef HAS_OUTDOOR_WEATHER
+  SHOW_OUTDOOR = doc.containsKey("SHOW_OUT") ? doc["SHOW_OUT"].as<bool>() : SHOW_OUTDOOR;
+  OUTDOOR_LAT = doc.containsKey("WTR_LAT") ? doc["WTR_LAT"].as<float>() : OUTDOOR_LAT;
+  OUTDOOR_LON = doc.containsKey("WTR_LON") ? doc["WTR_LON"].as<float>() : OUTDOOR_LON;
+#endif
   SOUND_ACTIVE = doc.containsKey("SOUND") ? doc["SOUND"].as<bool>() : SOUND_ACTIVE;
 
   if (doc.containsKey("VOL"))

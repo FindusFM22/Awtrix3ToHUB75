@@ -51,6 +51,16 @@ extern bool SHOW_BAT;
 extern String HA_PREFIX;
 extern bool SHOW_TEMP;
 extern bool SHOW_HUM;
+#ifdef HAS_OUTDOOR_WEATHER
+// wttr.in-based outdoor weather. Filled by PeripheryManager::fetchOutdoorTemp()
+// every ~10 minutes; OutdoorApp reads these to render its slot.
+extern float OUTDOOR_TEMP;
+extern bool  OUTDOOR_TEMP_VALID;
+extern float OUTDOOR_LAT;
+extern float OUTDOOR_LON;
+extern String OUTDOOR_ICON;   // one of: clear cloudy partlycloudy rain snow storm fog unknown
+extern bool  SHOW_OUTDOOR;
+#endif
 extern bool SHOW_SECONDS;
 extern bool SHOW_WEEKDAY;
 extern int8_t TRANS_EFFECT;

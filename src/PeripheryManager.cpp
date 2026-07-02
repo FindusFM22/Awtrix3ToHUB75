@@ -18,6 +18,10 @@
 #include <LittleFS.h>
 #include <LightDependentResistor.h>
 #include <MenuManager.h>
+#ifdef HAS_OUTDOOR_WEATHER
+#include <HTTPClient.h>
+#include <WiFi.h>
+#endif
 #include <ServerManager.h>
 #include <MedianFilterLib.h>
 #include <MeanFilterLib.h>
@@ -123,6 +127,12 @@ unsigned long previousMillis_BatTempHum = 0;
 unsigned long previousMillis_LDR = 0;
 const unsigned long interval_BatTempHum = 10000;
 const unsigned long interval_LDR = 100;
+#ifdef HAS_OUTDOOR_WEATHER
+// -1 forces first fetch as soon as WiFi is up (rather than waiting 10 min).
+unsigned long previousMillis_Weather = 0;
+bool weatherFetchDone = false;
+const unsigned long interval_Weather = 600000UL; // 10 minutes
+#endif
 int total = 0;
 unsigned long startTime;
 
@@ -503,6 +513,77 @@ void PeripheryManager_::setup()
         photocell.setPhotocellPositionOnGround(false);
 }
 
+#ifdef HAS_OUTDOOR_WEATHER
+// Map the "%C" text description wttr.in appends to a short icon slug. The
+// full text is compared case-insensitively as a substring so partial matches
+// like "Partly cloudy" or "Light rain shower" resolve to the closest slug.
+// Order matters: check more specific terms (thunder, storm, snow, rain, fog)
+// before the broader "cloud"/"clear" catch-alls.
+static String weatherTextToIconSlug(const String &raw)
+{
+    String s = raw;
+    s.toLowerCase();
+    if (s.indexOf("thunder") >= 0 || s.indexOf("storm") >= 0) return "storm";
+    if (s.indexOf("snow") >= 0 || s.indexOf("blizzard") >= 0 || s.indexOf("sleet") >= 0) return "snow";
+    if (s.indexOf("rain") >= 0 || s.indexOf("shower") >= 0 || s.indexOf("drizzle") >= 0) return "rain";
+    if (s.indexOf("fog") >= 0 || s.indexOf("mist") >= 0 || s.indexOf("haze") >= 0 || s.indexOf("smog") >= 0) return "fog";
+    if (s.indexOf("partly") >= 0) return "partlycloudy";
+    if (s.indexOf("cloud") >= 0 || s.indexOf("overcast") >= 0) return "cloudy";
+    if (s.indexOf("clear") >= 0 || s.indexOf("sunny") >= 0 || s.indexOf("fair") >= 0) return "clear";
+    return "unknown";
+}
+
+// Fetch outdoor temperature + weather condition from wttr.in.
+// Uses the "%t|%C" format so we get "+18°C|Partly cloudy" style responses;
+// the pipe avoids ambiguity when the condition itself contains spaces.
+// Called every ~10 minutes from tick(); no-op unless WiFi is up.
+void PeripheryManager_::fetchOutdoorTemp()
+{
+    if (WiFi.status() != WL_CONNECTED)
+        return;
+
+    HTTPClient http;
+    char url[96];
+    // 4 decimal places is well below wttr.in's practical location resolution
+    // and keeps the URL comfortably under any header size limits.
+    snprintf(url, sizeof(url), "http://wttr.in/%.4f,%.4f?format=%%t|%%C&m",
+             OUTDOOR_LAT, OUTDOOR_LON);
+    http.begin(url);
+    http.setTimeout(5000);
+    // Some CDNs return HTML if we advertise a browser; wttr.in respects curl-ish agents.
+    http.setUserAgent("curl/8.0 awtrix3");
+
+    const int code = http.GET();
+    if (code == HTTP_CODE_OK)
+    {
+        String body = http.getString();
+        body.trim();
+        // Split at "|" between "%t" and "%C".
+        int sep = body.indexOf('|');
+        String tPart = (sep > 0) ? body.substring(0, sep) : body;
+        String cPart = (sep > 0) ? body.substring(sep + 1) : "";
+
+        tPart.replace("+", "");
+        // wttr.in returns "°C" (UTF-8). Strip everything from the ° onward.
+        int deg = tPart.indexOf("\xC2\xB0");
+        if (deg < 0) deg = tPart.indexOf("°");
+        if (deg > 0) tPart = tPart.substring(0, deg);
+        tPart.trim();
+
+        float parsed = tPart.toFloat();
+        // toFloat returns 0.0 on failure — accept 0 only if the string was "0" or "0.0"
+        // (rare but possible at freezing). Guard the else branch instead of hard-erroring.
+        if (parsed != 0.0f || tPart == "0" || tPart == "0.0" || tPart == "-0" || tPart == "-0.0")
+        {
+            OUTDOOR_TEMP = parsed;
+            OUTDOOR_ICON = weatherTextToIconSlug(cPart);
+            OUTDOOR_TEMP_VALID = true;
+        }
+    }
+    http.end();
+}
+#endif // HAS_OUTDOOR_WEATHER
+
 void PeripheryManager_::tick()
 {
 #ifdef HAS_BUTTONS
@@ -607,6 +688,23 @@ void PeripheryManager_::tick()
             DisplayManager.setBrightness(BRIGHTNESS);
         }
     }
+
+#ifdef HAS_OUTDOOR_WEATHER
+    // First fetch happens as soon as WiFi is up; subsequent fetches every 10 min.
+    // weatherFetchDone stays false until the first successful call, so retries
+    // happen on every tick until the network is actually ready.
+    const unsigned long nowW = millis();
+    const bool timeForRefresh = weatherFetchDone
+        ? (nowW - previousMillis_Weather >= interval_Weather)
+        : true;
+    if (timeForRefresh)
+    {
+        previousMillis_Weather = nowW;
+        fetchOutdoorTemp();
+        if (OUTDOOR_TEMP_VALID)
+            weatherFetchDone = true;
+    }
+#endif
 }
 
 unsigned long long PeripheryManager_::readUptime()

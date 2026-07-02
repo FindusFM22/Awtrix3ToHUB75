@@ -50,6 +50,11 @@ public:
     uint8_t getMatrixPin();
     void setVolume(uint8_t);
     unsigned long long readUptime();
+#ifdef HAS_OUTDOOR_WEATHER
+    // Fetch outdoor temperature + weather-icon slug from wttr.in. Called from
+    // tick() every 10 min once WiFi is up; no-op without network.
+    void fetchOutdoorTemp();
+#endif
 };
 
 extern PeripheryManager_ &PeripheryManager;
