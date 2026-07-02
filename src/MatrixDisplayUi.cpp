@@ -1274,7 +1274,7 @@ static void gridPageFullscreenClock(FastLED_NeoMatrix *matrix, GifPlayer *gifPla
 // the incoming page enters from the top and pushes the outgoing page
 // downwards off the panel.
 enum GridPage { PAGE_CLOCK = 0, PAGE_GRID = 1 };
-static constexpr uint32_t PAGE_DURATION_MS = 5000;
+static constexpr uint32_t PAGE_DURATION_MS = 8000;
 static constexpr uint32_t TRANSITION_MS    = 500;
 
 // Renders a single page into leds[] via the matrix wrapper. matrix->clear()
