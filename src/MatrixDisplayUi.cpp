@@ -30,6 +30,13 @@
 #include "effects.h"
 #include "Globals.h"
 #include "effects.h"
+#ifdef DISPLAY_HUB75
+#include "Overlays.h"  // notifyFlag
+#include "Apps.h"      // TimeApp, TempApp, HumApp, OutdoorApp
+#include "icons.h"     // built-in fallback icons for grid widgets
+#include "Functions.h" // getTextWidth
+#include <LittleFS.h>
+#endif
 
 GifPlayer gif1;
 GifPlayer gif2;
@@ -241,8 +248,18 @@ void MatrixDisplayUi::tick()
     callEffect(this->matrix, 0, 0, BackgroundEffect);
   }
 
+#ifdef DISPLAY_HUB75
+  // Grid layout: four native apps rendered simultaneously in 32x16 quadrants.
+  // Suppressed while a notification is active — NotifyOverlay renders full
+  // panel via drawOverlays() below. The classic drawApp() rotation path is
+  // never taken on HUB75 builds; setAutoTransition is disabled at boot so
+  // the internal state machine stays in FIXED forever.
+  if (!notifyFlag)
+    this->drawGrid();
+#else
   if (this->AppCount > 0)
     this->drawApp();
+#endif
   this->drawOverlays();
   this->drawIndicators();
   if (GLOBAL_OVERLAY > 0)
@@ -936,3 +953,246 @@ void MatrixDisplayUi::crossfadeTransition()
     }
   }
 }
+
+#ifdef DISPLAY_HUB75
+// Four native apps rendered concurrently in 32x16 quadrants of the 64x32
+// panel. Slot layout:
+//   TL (0, 4)   → Time         (uses the classic TimeApp callback)
+//   TR (32, 4)  → Temperature  (grid widget: icon + padded 2-digit °C)
+//   BL (0, 20)  → Humidity     (grid widget: icon + padded 2-digit %)
+//   BR (32, 20) → Outdoor      (grid widget: dynamic weather icon + °C)
+//
+// TimeApp is called directly because its internal `printText(centered=true)`
+// already handles slot centering when x is 0 or 32 (see printText's
+// slotBase logic in DisplayManager.cpp). The other three widgets are
+// grid-native reimplementations rather than reuse of TempApp/HumApp/
+// OutdoorApp because those apps render left-aligned and can't easily
+// centre an icon+text pair inside a 32-wide slot without changing the
+// Ulanzi rotation behaviour.
+//
+// The Y offsets 4 / 20 (rather than 0 / 16) place the text baseline at
+// y=10 / y=26 — the vertical centre of each 32x16 quadrant. Icons at the
+// same slot Y stay in the upper half of the quadrant.
+//
+// GifPlayer sharing: gif1 for TL/BL, gif2 for TR/BR. TimeApp uses gif1 for
+// its optional background GIF; OutdoorApp uses whichever we hand it.
+// Splitting across the two instances avoids the file-name cache in
+// GifPlayer::playGif thrashing between two active animations per frame.
+
+// Format a signed integer as a 2-digit label. Non-negatives get a leading
+// "0" for single digits ("07" instead of "7"); negatives that are single-
+// digit swap the leading zero for the minus sign ("-3" instead of "-03").
+// Result always fits in the caller's buffer of size >= 4 (sign + 2 digits + NUL).
+static void gridFormatInt2(int value, char *out)
+{
+    if (value < 0)
+    {
+        int abs = -value;
+        if (abs < 10)
+            snprintf(out, 4, "-%d", abs);       // "-3"
+        else
+            snprintf(out, 4, "%d", value);       // "-27" — sign in the number
+    }
+    else
+    {
+        snprintf(out, 4, "%02d", value);         // "07", "23"
+    }
+}
+
+// Draw an 8x8 icon + text label horizontally centred inside a 32x16 slot.
+// The icon+text pair together occupies (8 + gap + textWidth). The x offset
+// is (32 - contentWidth) / 2, so the whole widget sits centred regardless
+// of text length. Icon is drawn at slot-y-relative row 0..7 (top of the
+// quadrant); text baseline lands at slotY + 6 (same as the classic apps).
+// Font case defaults to 0 so getTextWidth matches the actual matrixPrint.
+static void gridDrawIconText(FastLED_NeoMatrix *matrix,
+                             const uint16_t *icon8x8,
+                             int16_t slotX, int16_t slotY,
+                             const char *text, uint32_t color)
+{
+    const uint16_t textW = (uint16_t)getTextWidth(text, 0);
+    const int gap = 2;
+    const int contentW = 8 + gap + textW;
+    const int ox = slotX + (32 - contentW) / 2;
+    matrix->drawRGBBitmap(ox, slotY, (uint16_t *)icon8x8, 8, 8);
+    if (color > 0)
+        DisplayManager.setTextColor(color);
+    else
+        DisplayManager.resetTextColor();
+    DisplayManager.setCursor(ox + 8 + gap, slotY + 6);
+    DisplayManager.matrixPrint(text);
+}
+
+// Load an outdoor weather icon from LittleFS for the current OUTDOOR_ICON
+// slug, falling back to icon_234 (sun) when missing. Static cache handle
+// keeps GifPlayer decode state across frames so animation doesn't restart
+// (same pattern as OutdoorApp's caching in Apps.cpp).
+static const char *gridOutdoorIconId(const String &slug)
+{
+    if (slug == "clear")        return "11201";
+    if (slug == "partlycloudy") return "876";
+    if (slug == "cloudy")       return "12246";
+    if (slug == "rain")         return "72";
+    if (slug == "sleet")        return "160";
+    if (slug == "snow")         return "4702";
+    if (slug == "storm")        return "11428";
+    if (slug == "fog")          return "12196";
+    return nullptr;
+}
+
+// Draw an outdoor weather icon into an 8x8 area at (x, y). Uses LittleFS
+// icons; falls back to icon_234 if none matched. Caches file handle across
+// calls so the GIF animation doesn't reset each frame.
+static void gridDrawOutdoorIcon(FastLED_NeoMatrix *matrix, GifPlayer *gifPlayer,
+                                int16_t x, int16_t y)
+{
+    static fs::File cachedIcon;
+    static String cachedSlug = "";
+    const char *iconId = gridOutdoorIconId(OUTDOOR_ICON);
+    if (iconId != nullptr)
+    {
+        const String base = String("/ICONS/") + iconId;
+        if (cachedSlug != OUTDOOR_ICON || !cachedIcon)
+        {
+            if (cachedIcon) cachedIcon.close();
+            cachedSlug = OUTDOOR_ICON;
+            if (LittleFS.exists(base + ".jpg"))
+                cachedIcon = LittleFS.open(base + ".jpg");
+            else if (LittleFS.exists(base + ".gif"))
+                cachedIcon = LittleFS.open(base + ".gif");
+        }
+        if (cachedIcon)
+        {
+            const String name = cachedIcon.name();
+            if (name.endsWith(".jpg"))
+            {
+                DisplayManager.drawJPG(x, y, cachedIcon);
+                cachedIcon.seek(0);
+            }
+            else
+            {
+                gifPlayer->minFrameDelay = 500;
+                gifPlayer->playGif(x, y, &cachedIcon);
+            }
+            return;
+        }
+    }
+    matrix->drawRGBBitmap(x, y, (uint16_t *)icon_234, 8, 8);
+}
+
+// Same as gridDrawIconText but the icon-draw function is passed in so a
+// widget with a dynamic icon (like Outdoor's weather-based GIF) can reuse
+// the centering math without duplicating it.
+static void gridDrawWidget(FastLED_NeoMatrix *matrix,
+                           GifPlayer *gifPlayer,
+                           int16_t slotX, int16_t slotY,
+                           const char *text, uint32_t color,
+                           void (*drawIcon)(FastLED_NeoMatrix *, GifPlayer *, int16_t, int16_t))
+{
+    const uint16_t textW = (uint16_t)getTextWidth(text, 0);
+    const int gap = 2;
+    const int contentW = 8 + gap + textW;
+    const int ox = slotX + (32 - contentW) / 2;
+    drawIcon(matrix, gifPlayer, ox, slotY);
+    if (color > 0)
+        DisplayManager.setTextColor(color);
+    else
+        DisplayManager.resetTextColor();
+    DisplayManager.setCursor(ox + 8 + gap, slotY + 6);
+    DisplayManager.matrixPrint(text);
+}
+
+// Temperature widget: 8x8 sun icon + "07°C" / "23°C" / "-3°C" / "-27°C".
+static void gridWidgetTemp(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state,
+                           int16_t x, int16_t y, GifPlayer *gifPlayer)
+{
+    (void)state; (void)gifPlayer;
+    char num[4];
+    if (IS_CELSIUS)
+    {
+        gridFormatInt2((int)CURRENT_TEMP, num);
+    }
+    else
+    {
+        int f = (int)((CURRENT_TEMP * 9.0 / 5.0) + 32.0);
+        gridFormatInt2(f, num);
+    }
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%s%s", num, utf8ascii(IS_CELSIUS ? "°C" : "°F").c_str());
+    gridDrawIconText(matrix, icon_234, x, y, buf, TEMP_COLOR);
+}
+
+// Humidity widget: 8x8 droplet icon + "07%" / "42%".
+static void gridWidgetHum(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state,
+                          int16_t x, int16_t y, GifPlayer *gifPlayer)
+{
+    (void)state; (void)gifPlayer;
+    char num[4];
+    gridFormatInt2((int)CURRENT_HUM, num);
+    char buf[6];
+    snprintf(buf, sizeof(buf), "%s%%", num);
+    gridDrawIconText(matrix, icon_2075, x, y, buf, HUM_COLOR);
+}
+
+// Outdoor widget: dynamic weather icon (from wttr.in slug) + padded temp.
+// Draws nothing while OUTDOOR_TEMP_VALID is false so a stale 0°C never
+// appears at boot; same behaviour as OutdoorApp.
+static void gridWidgetOutdoor(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state,
+                              int16_t x, int16_t y, GifPlayer *gifPlayer)
+{
+    (void)state;
+    if (!OUTDOOR_TEMP_VALID)
+        return;
+    char num[4];
+    if (IS_CELSIUS)
+    {
+        gridFormatInt2((int)OUTDOOR_TEMP, num);
+    }
+    else
+    {
+        int f = (int)((OUTDOOR_TEMP * 9.0 / 5.0) + 32.0);
+        gridFormatInt2(f, num);
+    }
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%s%s", num, utf8ascii(IS_CELSIUS ? "°C" : "°F").c_str());
+    gridDrawWidget(matrix, gifPlayer, x, y, buf, TEMP_COLOR, gridDrawOutdoorIcon);
+}
+
+struct GridSlot
+{
+  int16_t x, y;
+  AppCallback callback;
+  GifPlayer *gif;
+};
+static GridSlot gridSlots[4];
+static bool gridInitialised = false;
+
+// Called from DisplayManager_::setup() once the app callbacks are known.
+// Kept here rather than in DisplayManager.cpp so all grid layout constants
+// live in one place.
+void MatrixDisplayUi_initGrid()
+{
+  gridSlots[0] = {0,  4,  TimeApp,          &gif1};
+  gridSlots[1] = {32, 4,  gridWidgetTemp,   &gif2};
+  gridSlots[2] = {0,  20, gridWidgetHum,    &gif1};
+  gridSlots[3] = {32, 20, gridWidgetOutdoor, &gif2};
+  gridInitialised = true;
+}
+
+void MatrixDisplayUi::drawGrid()
+{
+  if (!gridInitialised)
+    return;
+  for (int i = 0; i < 4; i++)
+  {
+    const GridSlot &s = gridSlots[i];
+    s.callback(this->matrix, &this->state, s.x, s.y, s.gif);
+  }
+  // App callbacks each set CURRENT_APP to their own name as a side effect.
+  // In grid mode the value is meaningless — set a fixed label so MQTT
+  // consumers see "Grid" instead of a race between the four names.
+  CURRENT_APP = "Grid";
+  currentCustomApp = "";
+}
+#endif
+

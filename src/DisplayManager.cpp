@@ -221,7 +221,13 @@ void DisplayManager_::printText(int16_t x, int16_t y, const char *text, bool cen
   if (centered)
   {
     uint16_t textWidth = getTextWidth(text, textCase);
-    int16_t textX = ((32 - textWidth) / 2);
+    // Centre within a 32px slot. Preserve legacy semantics: the caller's x
+    // is ignored horizontally, but any x >= 32 is treated as a slot base
+    // (used by the HUB75 grid to place widgets in right/left half of the
+    // 64-wide panel). x % 32 keeps the fine-grained x offset that some
+    // TimeApp modes pass in — but on Ulanzi (x=0) this is a no-op.
+    int16_t slotBase = (x >= 32) ? 32 : 0;
+    int16_t textX = slotBase + ((32 - textWidth) / 2);
     setCursor(textX, y);
   }
   else
@@ -1173,7 +1179,18 @@ void DisplayManager_::loadNativeApps()
 #endif
 
   ui->setApps(Apps);
+#ifdef DISPLAY_HUB75
+  // Grid mode always shows all four widgets — the internal FIXED/IN_TRANSITION
+  // state machine has no work to do. Keep it in FIXED forever by disabling
+  // auto-transition.
+  setAutoTransition(false);
+  // Populate the grid slot table now that all four callbacks are known.
+  // Called from here rather than main.cpp so it runs even when WiFi is
+  // unreachable at boot (the main.cpp path was gated on isConnected).
+  MatrixDisplayUi_initGrid();
+#else
   setAutoTransition(true);
+#endif
 }
 
 void DisplayManager_::setup()

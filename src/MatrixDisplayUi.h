@@ -29,6 +29,7 @@
 #define MatrixDisplayUi_h
 
 #include <Arduino.h>
+#include "HardwareConfig.h"
 #include "FastLED_NeoMatrix.h"
 #include "GifPlayer.h"
 #include "DisplayManager.h"
@@ -119,8 +120,12 @@ private:
   void drawApp();
   void drawOverlays();
   void drawBackground();
-  void tick();
-  void resetState();
+#ifdef DISPLAY_HUB75
+  // Render four native apps side-by-side in 32x16 quadrants on the HUB75
+  // panel. Called from tick() in place of drawApp() on HUB75 builds.
+  void drawGrid();
+#endif
+  void tick();  void resetState();
   bool isCurrentAppValid();
   void curtainTransition();
   void slideTransition();
@@ -246,4 +251,10 @@ public:
   int indicator2Fade = 0;
   int indicator3Fade = 0;
 };
+
+#ifdef DISPLAY_HUB75
+// One-time initialization of the four-quadrant grid slot table.
+// Called from DisplayManager_::setup() after loadNativeApps().
+void MatrixDisplayUi_initGrid();
+#endif
 #endif
