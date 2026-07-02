@@ -10,6 +10,19 @@
 std::vector<Notification> notifications;
 bool notifyFlag = false;
 
+// HUB75 renders NotifyOverlay full-panel: the 32x8 notification content is
+// centred inside the 64x32 panel by shifting every draw call by (16, 12).
+// The area around it is filled with the notification background so the panel
+// doesn't show a small strip floating on black. On Ulanzi/WS2812 builds the
+// offsets are zero — behaviour is byte-for-byte identical to before.
+#ifdef DISPLAY_HUB75
+static constexpr int16_t NOTIFY_OX = 16;
+static constexpr int16_t NOTIFY_OY = 12;
+#else
+static constexpr int16_t NOTIFY_OX = 0;
+static constexpr int16_t NOTIFY_OY = 0;
+#endif
+
 void StatusOverlay(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state, GifPlayer *gifPlayer)
 {
     if (!WiFi.isConnected())
@@ -87,11 +100,18 @@ void NotifyOverlay(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state, GifPl
     bool hasIcon = notifications[0].icon || notifications[0].jpegDataSize > 0;
 
     // Clear the matrix display
+#ifdef DISPLAY_HUB75
+    // Fullscreen background fill so the panel doesn't show a small
+    // notification strip floating on black. The 32x8 notification content
+    // itself is centred via NOTIFY_OX/OY below.
+    matrix->fillScreen(notifications[0].background);
+#else
     DisplayManager.drawFilledRect(0, 0, 32, 8, notifications[0].background);
+#endif
 
     if (notifications[0].effect > -1)
     {
-        callEffect(matrix, 0, 0, notifications[0].effect);
+        callEffect(matrix, NOTIFY_OX, NOTIFY_OY, notifications[0].effect);
     }
 
     // Calculate text and available width
@@ -137,51 +157,51 @@ void NotifyOverlay(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state, GifPl
 
             if (notifications[0].isGif)
             {
-                iconWidth = gifPlayer->playGif(notifications[0].iconPosition + notifications[0].iconOffset, 0, &notifications[0].icon);
+                iconWidth = gifPlayer->playGif(NOTIFY_OX + notifications[0].iconPosition + notifications[0].iconOffset, NOTIFY_OY, &notifications[0].icon);
             }
             else
             {
                 iconWidth = 8;
                 if (notifications[0].jpegDataSize > 0)
                 {
-                    DisplayManager.drawJPG(notifications[0].iconPosition + notifications[0].iconOffset, 0, notifications[0].jpegDataBuffer, notifications[0].jpegDataSize);
+                    DisplayManager.drawJPG(NOTIFY_OX + notifications[0].iconPosition + notifications[0].iconOffset, NOTIFY_OY, notifications[0].jpegDataBuffer, notifications[0].jpegDataSize);
                 }
                 else
                 {
-                    DisplayManager.drawJPG(notifications[0].iconPosition + notifications[0].iconOffset, 0, notifications[0].icon);
+                    DisplayManager.drawJPG(NOTIFY_OX + notifications[0].iconPosition + notifications[0].iconOffset, NOTIFY_OY, notifications[0].icon);
                 }
             }
             if (!noScrolling)
             {
                 if (notifications[0].progress > -1)
                 {
-                    DisplayManager.drawLine(iconWidth + notifications[0].iconPosition + notifications[0].iconOffset, 0, iconWidth + notifications[0].iconPosition, 6, notifications[0].background);
+                    DisplayManager.drawLine(NOTIFY_OX + iconWidth + notifications[0].iconPosition + notifications[0].iconOffset, NOTIFY_OY, NOTIFY_OX + iconWidth + notifications[0].iconPosition, NOTIFY_OY + 6, notifications[0].background);
                 }
                 else
                 {
-                    DisplayManager.drawLine(iconWidth + notifications[0].iconPosition + notifications[0].iconOffset, 0, iconWidth + notifications[0].iconPosition, 7, notifications[0].background);
+                    DisplayManager.drawLine(NOTIFY_OX + iconWidth + notifications[0].iconPosition + notifications[0].iconOffset, NOTIFY_OY, NOTIFY_OX + iconWidth + notifications[0].iconPosition, NOTIFY_OY + 7, notifications[0].background);
                 }
             }
         }
 
         if (notifications[0].progress > -1)
         {
-            DisplayManager.drawProgressBar((hasIcon ? 8 : 0), 7, notifications[0].progress, notifications[0].pColor, notifications[0].pbColor);
+            DisplayManager.drawProgressBar(NOTIFY_OX + (hasIcon ? 8 : 0), NOTIFY_OY + 7, notifications[0].progress, notifications[0].pColor, notifications[0].pbColor);
         }
 
         if (notifications[0].drawInstructions.length() > 0)
         {
-            DisplayManager.processDrawInstructions(0, 0, notifications[0].drawInstructions);
+            DisplayManager.processDrawInstructions(NOTIFY_OX, NOTIFY_OY, notifications[0].drawInstructions);
         }
 
         if (notifications[0].barSize > 0)
         {
-            DisplayManager.drawBarChart(0, 0, notifications[0].barData, notifications[0].barSize, hasIcon, notifications[0].color, notifications[0].barBG);
+            DisplayManager.drawBarChart(NOTIFY_OX, NOTIFY_OY, notifications[0].barData, notifications[0].barSize, hasIcon, notifications[0].color, notifications[0].barBG);
         }
 
         if (notifications[0].lineSize > 0)
         {
-            DisplayManager.drawLineChart(0, 0, notifications[0].lineData, notifications[0].lineSize, hasIcon, notifications[0].color);
+            DisplayManager.drawLineChart(NOTIFY_OX, NOTIFY_OY, notifications[0].lineData, notifications[0].lineSize, hasIcon, notifications[0].color);
         }
     };
 
@@ -264,17 +284,17 @@ void NotifyOverlay(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state, GifPl
 
         if (!notifications[0].fragments.empty())
         {
-            int16_t fragmentX = textX + notifications[0].textOffset;
+            int16_t fragmentX = NOTIFY_OX + textX + notifications[0].textOffset;
             for (size_t i = 0; i < notifications[0].fragments.size(); ++i)
             {
                 if (notifications[0].colors[i] == 0)
                 {
-                    DisplayManager.HSVtext(fragmentX, 6, notifications[0].fragments[i].c_str(), false, notifications[0].textCase);
+                    DisplayManager.HSVtext(fragmentX, NOTIFY_OY + 6, notifications[0].fragments[i].c_str(), false, notifications[0].textCase);
                 }
                 else
                 {
                     DisplayManager.setTextColor(TextEffect(notifications[0].colors[i], notifications[0].fade, notifications[0].blink));
-                    DisplayManager.printText(fragmentX, 6, notifications[0].fragments[i].c_str(), false, notifications[0].textCase);
+                    DisplayManager.printText(fragmentX, NOTIFY_OY + 6, notifications[0].fragments[i].c_str(), false, notifications[0].textCase);
                 }
 
                 fragmentX += getTextWidth(notifications[0].fragments[i].c_str(), notifications[0].textCase);
@@ -284,17 +304,17 @@ void NotifyOverlay(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state, GifPl
         {
             if (notifications[0].rainbow)
             {
-                DisplayManager.HSVtext(textX + notifications[0].textOffset, 6, notifications[0].text.c_str(), false, notifications[0].textCase);
+                DisplayManager.HSVtext(NOTIFY_OX + textX + notifications[0].textOffset, NOTIFY_OY + 6, notifications[0].text.c_str(), false, notifications[0].textCase);
             }
             else if (notifications[0].gradient[0] > -1 && notifications[0].gradient[1] > -1)
             {
-                DisplayManager.GradientText(textX + notifications[0].textOffset, 6, notifications[0].text.c_str(), notifications[0].gradient[0], notifications[0].gradient[1], false, notifications[0].textCase);
+                DisplayManager.GradientText(NOTIFY_OX + textX + notifications[0].textOffset, NOTIFY_OY + 6, notifications[0].text.c_str(), notifications[0].gradient[0], notifications[0].gradient[1], false, notifications[0].textCase);
             }
             else
             {
                 DisplayManager.setTextColor(TextEffect(notifications[0].color, notifications[0].fade, notifications[0].blink));
 
-                DisplayManager.printText(textX + notifications[0].textOffset, 6, notifications[0].text.c_str(), false, notifications[0].textCase);
+                DisplayManager.printText(NOTIFY_OX + textX + notifications[0].textOffset, NOTIFY_OY + 6, notifications[0].text.c_str(), false, notifications[0].textCase);
             }
         }
     }
@@ -302,17 +322,17 @@ void NotifyOverlay(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state, GifPl
     {
         if (!notifications[0].fragments.empty())
         {
-            int16_t fragmentX = notifications[0].scrollposition;
+            int16_t fragmentX = NOTIFY_OX + notifications[0].scrollposition;
             for (size_t i = 0; i < notifications[0].fragments.size(); ++i)
             {
                 if (notifications[0].colors[i] == 0)
                 {
-                    DisplayManager.HSVtext(fragmentX, 6, notifications[0].fragments[i].c_str(), false, notifications[0].textCase);
+                    DisplayManager.HSVtext(fragmentX, NOTIFY_OY + 6, notifications[0].fragments[i].c_str(), false, notifications[0].textCase);
                 }
                 else
                 {
                     DisplayManager.setTextColor(TextEffect(notifications[0].colors[i], notifications[0].fade, notifications[0].blink));
-                    DisplayManager.printText(fragmentX, 6, notifications[0].fragments[i].c_str(), false, notifications[0].textCase);
+                    DisplayManager.printText(fragmentX, NOTIFY_OY + 6, notifications[0].fragments[i].c_str(), false, notifications[0].textCase);
                 }
                 fragmentX += getTextWidth(notifications[0].fragments[i].c_str(), notifications[0].textCase);
             }
@@ -322,17 +342,17 @@ void NotifyOverlay(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state, GifPl
             if (notifications[0].rainbow)
             {
                 // Display scrolling text in rainbow color if enabled
-                DisplayManager.HSVtext(notifications[0].scrollposition, 6, notifications[0].text.c_str(), false, notifications[0].textCase);
+                DisplayManager.HSVtext(NOTIFY_OX + notifications[0].scrollposition, NOTIFY_OY + 6, notifications[0].text.c_str(), false, notifications[0].textCase);
             }
             else if (notifications[0].gradient[0] > -1 && notifications[0].gradient[1] > -1)
             {
-                DisplayManager.GradientText(notifications[0].scrollposition + notifications[0].textOffset, 6, notifications[0].text.c_str(), notifications[0].gradient[0], notifications[0].gradient[1], false, notifications[0].textCase);
+                DisplayManager.GradientText(NOTIFY_OX + notifications[0].scrollposition + notifications[0].textOffset, NOTIFY_OY + 6, notifications[0].text.c_str(), notifications[0].gradient[0], notifications[0].gradient[1], false, notifications[0].textCase);
             }
             else
             {
                 // Set text color
                 DisplayManager.setTextColor(TextEffect(notifications[0].color, notifications[0].fade, notifications[0].blink));
-                DisplayManager.printText(notifications[0].scrollposition + notifications[0].textOffset, 6, notifications[0].text.c_str(), false, notifications[0].textCase);
+                DisplayManager.printText(NOTIFY_OX + notifications[0].scrollposition + notifications[0].textOffset, NOTIFY_OY + 6, notifications[0].text.c_str(), false, notifications[0].textCase);
             }
         }
     }
@@ -362,7 +382,7 @@ void NotifyOverlay(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state, GifPl
 
     if (!notifications[0].overlay == NONE)
     {
-        EffectOverlay(matrix, 0, 0, notifications[0].overlay);
+        EffectOverlay(matrix, NOTIFY_OX, NOTIFY_OY, notifications[0].overlay);
     }
 
     // Reset text color after displaying notification
