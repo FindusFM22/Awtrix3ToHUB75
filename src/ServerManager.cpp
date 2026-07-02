@@ -142,6 +142,34 @@ void addHandler()
                        DisplayManager.hub75Pixel(x, y, rgb, dur);
                        mws.webserver->send(200, F("text/plain"), F("OK"));
                    });
+    // Debug: column sweep R G B W R G B W ... from right to left.
+    // Usage: POST /api/hub75/cols?d=60000
+    mws.addHandler("/api/hub75/cols", HTTP_ANY, []()
+                   {
+                       uint32_t dur = mws.webserver->hasArg("d") ? mws.webserver->arg("d").toInt() : 60000;
+                       DisplayManager.hub75ColSweep(dur);
+                       mws.webserver->send(200, F("text/plain"), F("OK"));
+                   });
+    // Debug: row sweep R G B W R G B W ... top-down.
+    // Usage: POST /api/hub75/rows?d=60000
+    mws.addHandler("/api/hub75/rows", HTTP_ANY, []()
+                   {
+                       uint32_t dur = mws.webserver->hasArg("d") ? mws.webserver->arg("d").toInt() : 60000;
+                       DisplayManager.hub75RowSweep(dur);
+                       mws.webserver->send(200, F("text/plain"), F("OK"));
+                   });
+    // Debug: 1x1 checkerboard. Usage:
+    //   POST /api/hub75/check?a=FF0000&b=00FF00&d=60000
+    mws.addHandler("/api/hub75/check", HTTP_ANY, []()
+                   {
+                       String a = mws.webserver->hasArg("a") ? mws.webserver->arg("a") : "FFFFFF";
+                       String b = mws.webserver->hasArg("b") ? mws.webserver->arg("b") : "000000";
+                       uint32_t ra = strtoul(a.c_str(), nullptr, 16);
+                       uint32_t rb = strtoul(b.c_str(), nullptr, 16);
+                       uint32_t dur = mws.webserver->hasArg("d") ? mws.webserver->arg("d").toInt() : 60000;
+                       DisplayManager.hub75Checkerboard(ra, rb, dur);
+                       mws.webserver->send(200, F("text/plain"), F("OK"));
+                   });
 #endif
     mws.addHandler("/api/rtttl", HTTP_POST, []()
                    { mws.webserver->send(200,F("text/plain"),F("OK")); PeripheryManager.playRTTTLString(mws.webserver->arg("plain").c_str()); });

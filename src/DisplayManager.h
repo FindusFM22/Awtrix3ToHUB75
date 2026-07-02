@@ -94,6 +94,17 @@ public:
     // Used to check individual pixel addressability (e.g. missing pixel in a
     // corner marker). Coordinates clamped to panel bounds.
     void hub75Pixel(int x, int y, uint32_t rgb, uint32_t durationMs = 0);
+    // Debug helper: column pattern R G B W R G B W ..., starting from the
+    // right edge and cycling leftward. Each column is a full panel column.
+    // Used to visually check column alignment across the whole panel width.
+    void hub75ColSweep(uint32_t durationMs = 0);
+    // Debug helper: row pattern R G B W R G B W ..., starting from the top
+    // edge and cycling downward. Each row is a full panel row.
+    void hub75RowSweep(uint32_t durationMs = 0);
+    // Debug helper: 1x1 checkerboard between two colours. Reveals per-pixel
+    // shift / stretch anywhere on the panel (adjacent-cell contrast is the
+    // most sensitive test for HUB75 timing issues).
+    void hub75Checkerboard(uint32_t rgbA, uint32_t rgbB, uint32_t durationMs = 0);
 #endif
     bool indicatorParser(uint8_t indicator, const char *json);
     void showSleepAnimation();

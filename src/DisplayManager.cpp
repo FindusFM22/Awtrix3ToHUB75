@@ -2252,6 +2252,96 @@ void DisplayManager_::hub75Pixel(int x, int y, uint32_t rgb, uint32_t durationMs
   dma_display->flipDMABuffer();
   hub75FillLockUntil = durationMs ? (millis() + durationMs) : 0;
 }
+
+// Debug: column stripes R G B W R G B W ... starting from the right edge
+// and cycling to the left. Column count = HUB75_PANEL_W; pattern length 4.
+// Every column is one physical pixel wide and full panel height.
+void DisplayManager_::hub75ColSweep(uint32_t durationMs)
+{
+  if (!dma_display)
+    return;
+  static const uint8_t pal[4][3] = {
+      {255, 0, 0},     // R
+      {0, 255, 0},     // G
+      {0, 0, 255},     // B
+      {255, 255, 255}, // W
+  };
+  auto paint = [&]() {
+    dma_display->fillScreenRGB888(0, 0, 0);
+    for (int x = HUB75_PANEL_W - 1; x >= 0; x--)
+    {
+      // Cycle index counts from the right (x = W-1 → 0, W-2 → 1, ...)
+      const int idx = (HUB75_PANEL_W - 1 - x) & 3;
+      const uint8_t r = pal[idx][0];
+      const uint8_t g = pal[idx][1];
+      const uint8_t b = pal[idx][2];
+      for (int y = 0; y < HUB75_PANEL_H; y++)
+        dma_display->drawPixelRGB888(x, y, r, g, b);
+    }
+  };
+  paint();
+  dma_display->flipDMABuffer();
+  paint();
+  dma_display->flipDMABuffer();
+  hub75FillLockUntil = durationMs ? (millis() + durationMs) : 0;
+}
+
+// Debug: row stripes R G B W R G B W ... starting from the top edge and
+// cycling downward. Row count = HUB75_PANEL_H; pattern length 4.
+void DisplayManager_::hub75RowSweep(uint32_t durationMs)
+{
+  if (!dma_display)
+    return;
+  static const uint8_t pal[4][3] = {
+      {255, 0, 0},
+      {0, 255, 0},
+      {0, 0, 255},
+      {255, 255, 255},
+  };
+  auto paint = [&]() {
+    dma_display->fillScreenRGB888(0, 0, 0);
+    for (int y = 0; y < HUB75_PANEL_H; y++)
+    {
+      const int idx = y & 3;
+      const uint8_t r = pal[idx][0];
+      const uint8_t g = pal[idx][1];
+      const uint8_t b = pal[idx][2];
+      for (int x = 0; x < HUB75_PANEL_W; x++)
+        dma_display->drawPixelRGB888(x, y, r, g, b);
+    }
+  };
+  paint();
+  dma_display->flipDMABuffer();
+  paint();
+  dma_display->flipDMABuffer();
+  hub75FillLockUntil = durationMs ? (millis() + durationMs) : 0;
+}
+
+// Debug: 1x1 checkerboard. Colour A at ((x+y)&1)==0, B otherwise.
+// Detects any per-pixel misalignment because adjacent cells differ.
+void DisplayManager_::hub75Checkerboard(uint32_t rgbA, uint32_t rgbB, uint32_t durationMs)
+{
+  if (!dma_display)
+    return;
+  const uint8_t ar = (rgbA >> 16) & 0xFF, ag = (rgbA >> 8) & 0xFF, ab = rgbA & 0xFF;
+  const uint8_t br = (rgbB >> 16) & 0xFF, bg = (rgbB >> 8) & 0xFF, bb = rgbB & 0xFF;
+  auto paint = [&]() {
+    for (int y = 0; y < HUB75_PANEL_H; y++)
+      for (int x = 0; x < HUB75_PANEL_W; x++)
+      {
+        const bool a = ((x + y) & 1) == 0;
+        dma_display->drawPixelRGB888(x, y,
+                                     a ? ar : br,
+                                     a ? ag : bg,
+                                     a ? ab : bb);
+      }
+  };
+  paint();
+  dma_display->flipDMABuffer();
+  paint();
+  dma_display->flipDMABuffer();
+  hub75FillLockUntil = durationMs ? (millis() + durationMs) : 0;
+}
 #endif
 
 void DisplayManager_::sendAppLoop()
