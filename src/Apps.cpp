@@ -12,7 +12,7 @@
 #include "Overlays.h"
 #include "timer.h"
 
-const uint8_t bigdigits_mask[12][7] = {
+extern const uint8_t bigdigits_mask[12][7] = {
     {132, 48, 48, 48, 48, 48, 132},      // 0
     {204, 140, 204, 204, 204, 204, 0},   // 1
     {132, 48, 240, 196, 156, 48, 0},     // 2

@@ -37,6 +37,9 @@
 #include "Functions.h" // getTextWidth
 #include "timer.h"     // timer_localtime, timer_time for the time widget
 #include <LittleFS.h>
+// The bigdigits glyph table lives in Apps.cpp; the clock row here reuses it
+// directly (same layout as TimeApp's TIME_MODE=5).
+extern const uint8_t bigdigits_mask[12][7];
 #endif
 
 GifPlayer gif1;
@@ -1224,97 +1227,94 @@ static GridSlot gridSlots[4];
 static bool gridInitialised = false;
 
 // Single-page layout on the 64x32 panel:
-//   Rows 0-13:  Large HH:MM at setTextSize(2) — 58 x 14 px, centred
-//   Row 14:     Weekday line (7 segments, current day highlighted)
-//   Rows 16-22: Calendar box (9x8) at left with day number, date text to the
-//               right ("WD DD.MM") — the "clock + date + icon" combo from the
-//               classic TimeApp, laid out as a strip under the big clock.
-//   Rows 24-31: Continuous left-scrolling marquee — indoor temp, outdoor
-//               temp (dynamic weather icon), humidity, UV index.
+//   Rows 0-7:   Calendar box (9x8, day number inside) + bigdigits HH:MM
+//                (6x7 per glyph → 34 px wide) side-by-side, centred.
+//   Row 9:      Weekday indicator line, 7 segments spanning most of the panel
+//                width, current day highlighted.
+//   Rows 22-31: Continuous left-scrolling marquee — indoor temp, outdoor
+//                temp (dynamic weather icon), humidity, UV index. Slow
+//                (~10 px/s) so values stay readable.
 //
-// Top block occupies ~22 rows (~69% of the panel); marquee occupies the
-// bottom 8 rows. Matches the "2/3 clock+date, 1/3 marquee" split.
+// No date text row: the day number lives inside the calendar box, and the
+// weekday line below the clock covers the "which day is it" question.
 
-static void drawBigClock(FastLED_NeoMatrix *matrix)
+// Helper: 0xRRGGBB → Adafruit 5-6-5 for matrix->setTextColor.
+static inline uint16_t rgb888to565(uint32_t c)
 {
+  uint8_t r = (c >> 16) & 0xFF;
+  uint8_t g = (c >> 8) & 0xFF;
+  uint8_t b = c & 0xFF;
+  return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+}
+
+// The clock block width: calendar box (9) + gap (2) + digits (5 * 6 + gaps).
+// Widths in "bigdigits_mask" per column: 6 px per digit, with the classic
+// TimeApp squeezing digits 3-4 by 2 px and the colon by 1 px (see the
+// `xx = i * 7 - (i > 2 ? 2 : 0) - (i == 2)` line in TimeApp). Reproduced
+// here so the digits look right; last column of digit 4 sits at x = 33
+// relative to the digits' base x — total digit-block width = 34.
+static void drawClockRow(FastLED_NeoMatrix *matrix)
+{
+  // --- Compose HH:MM the same way TimeApp does, with blinking colon. ---
+  char t[8];
   const char *fmt = "%H:%M";
   if (TIME_FORMAT.length() >= 3 && TIME_FORMAT[2] == ' ')
     fmt = (timer_time() % 2) ? "%H %M" : "%H:%M";
-  char clock[8];
-  strftime(clock, sizeof(clock), fmt, timer_localtime());
+  strftime(t, sizeof(t), fmt, timer_localtime());
+  // TimeApp swaps space→';' (blank glyph) so bigdigits_mask indexing works.
+  if (t[2] == ' ')
+    t[2] = ';';
+  if (t[0] == ' ')
+    t[0] = ';';
 
-  if (TIME_COLOR > 0)
+  // --- Layout: box left, digits right, whole block centred. ---
+  const int BOX_W = 9;
+  const int BOX_H = 8;
+  const int GAP = 2;
+  const int DIGITS_W = 34;     // matches TimeApp's TIME_MODE=5 width
+  const int TOTAL_W = BOX_W + GAP + DIGITS_W;   // 45
+  const int OX = (64 - TOTAL_W) / 2;             // 9
+
+  // --- Calendar box + day number (rows 0-7). ---
+  DisplayManager.drawFilledRect(OX, 0, BOX_W, BOX_H, CALENDAR_BODY_COLOR);
+  DisplayManager.drawFilledRect(OX, 0, BOX_W, 2, CALENDAR_HEADER_COLOR);
+
+  char dayStr[3];
+  const int mday = timer_localtime()->tm_mday;
+  snprintf(dayStr, sizeof(dayStr), "%d", mday);
+  const int dayOffX = (mday < 10) ? 3 : 1;
+  DisplayManager.setTextColor(CALENDAR_TEXT_COLOR);
+  DisplayManager.setCursor(OX + dayOffX, 7);
+  DisplayManager.matrixPrint(dayStr);
+
+  // --- bigdigits HH:MM (rows 0-6). Same glyph mapping as TimeApp. ---
+  const uint16_t clockColor = (TIME_COLOR > 0) ? rgb888to565(TIME_COLOR) : 0xFFFF;
+  const int digitsX = OX + BOX_W + GAP;
+  for (int i = 0; i < 5; i++)
   {
-    // TIME_COLOR is 0xRRGGBB; matrix->setTextColor wants 565.
-    uint8_t r = (TIME_COLOR >> 16) & 0xFF;
-    uint8_t g = (TIME_COLOR >> 8)  & 0xFF;
-    uint8_t b = (TIME_COLOR)       & 0xFF;
-    uint16_t c565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-    matrix->setTextColor(c565);
+    const int xx = digitsX + i * 7 - (i > 2 ? 2 : 0) - (i == 2);
+    matrix->drawBitmap(xx, 0, bigdigits_mask[t[i] - '0'], 6, 7, clockColor);
   }
-  else
-  {
-    matrix->setTextColor(0xFFFF);
-  }
-  matrix->setTextSize(2);
-  matrix->setCursor((64 - 58) / 2, 0);
-  matrix->print(clock);
-  matrix->setTextSize(1);
 }
 
-// Weekday line at y=14: 7 segments spanning the panel width, current day
-// highlighted. Uses WDC_ACTIVE / WDC_INACTIVE from the classic TimeApp.
+// Weekday line at y=9: 7 segments, current day highlighted. Uses
+// WDC_ACTIVE / WDC_INACTIVE from the classic weekday indicator.
 static void drawWeekdayLine(FastLED_NeoMatrix *matrix)
 {
   const uint8_t SEG_W = 6;
   const uint8_t SEG_SPACING = 2;
-  const uint8_t START_X = 8;      // (64 - 7 * (SEG_W + SEG_SPACING) + SEG_SPACING) / 2 = 4; nudged to 8 for symmetry with calendar box below
-  const uint8_t Y = 14;
+  const uint8_t COUNT = 7;
+  const int stripW = COUNT * SEG_W + (COUNT - 1) * SEG_SPACING;   // 54
+  const int START_X = (64 - stripW) / 2;                           // 5
+  const uint8_t Y = 9;
   const uint8_t dayOffset = START_ON_MONDAY ? 0 : 1;
   const int today = (timer_localtime()->tm_wday + 6 + dayOffset) % 7;
-  for (int i = 0; i <= 6; i++)
+  for (int i = 0; i < COUNT; i++)
   {
     const int x = START_X + i * (SEG_W + SEG_SPACING);
     const uint32_t color = (i == today) ? WDC_ACTIVE : WDC_INACTIVE;
     matrix->drawFastHLine(x, Y, SEG_W, color);
   }
-}
-
-// Date row at y=16: 9x8 calendar box on the left with the day number, then
-// "WD DD.MM" text to its right. Mirrors TimeApp's TIME_MODE=1 look but at
-// a fixed panel position (not a slot).
-static void drawDateRow(FastLED_NeoMatrix *matrix)
-{
-  const int BOX_X = 0;
-  const int BOX_Y = 16;
-
-  // Calendar box: body + header stripe (same colors as TimeApp).
-  DisplayManager.drawFilledRect(BOX_X, BOX_Y, 9, 8, CALENDAR_BODY_COLOR);
-  DisplayManager.drawFilledRect(BOX_X, BOX_Y, 9, 2, CALENDAR_HEADER_COLOR);
-
-  // Day number inside the box.
-  struct tm *now = timer_localtime();
-  char dayStr[3];
-  snprintf(dayStr, sizeof(dayStr), "%d", now->tm_mday);
-  const int dayOffX = (now->tm_mday < 10) ? 3 : 1;
-  DisplayManager.setTextColor(CALENDAR_TEXT_COLOR);
-  DisplayManager.setCursor(BOX_X + dayOffX, BOX_Y + 7);
-  DisplayManager.matrixPrint(dayStr);
-
-  // Date text to the right of the box.
-  const char *weekdays[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-  char date[16];
-  snprintf(date, sizeof(date), "%s %02d.%02d",
-           weekdays[now->tm_wday], now->tm_mday, now->tm_mon + 1);
-  if (DATE_COLOR > 0)
-    DisplayManager.setTextColor(DATE_COLOR);
-  else
-    DisplayManager.resetTextColor();
-  const uint16_t textW = (uint16_t)getTextWidth(date, 0);
-  const int availW = 64 - 11;
-  const int textX = 11 + (availW - textW) / 2;
-  DisplayManager.setCursor(textX, BOX_Y + 6);
-  DisplayManager.matrixPrint(date);
 }
 
 // Marquee entry: an 8x8 icon (either a static const uint16_t[] pointer, or
@@ -1367,16 +1367,22 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
   else if (OUTDOOR_UV <= 10)  uvColor = 0xFF0000;
   else                        uvColor = 0xA000FF;
 
+  // TEMP_COLOR / HUM_COLOR default to 0 (= "use default text color"), which
+  // for setTextColor(0) means BLACK — invisible on the dark panel. Coerce
+  // 0 to white so the marquee is always legible regardless of user config.
+  const uint32_t tempCol = (TEMP_COLOR > 0) ? TEMP_COLOR : 0xFFFFFF;
+  const uint32_t humCol  = (HUM_COLOR  > 0) ? HUM_COLOR  : 0xFFFFFF;
+
   MarqueeItem items[] = {
-      {icon_234,  nullptr,                inTxt,  TEMP_COLOR},
-      {nullptr,   gridDrawOutdoorIcon,    outTxt, TEMP_COLOR},
-      {icon_2075, nullptr,                humTxt, HUM_COLOR},
+      {icon_234,  nullptr,                inTxt,  tempCol},
+      {nullptr,   gridDrawOutdoorIcon,    outTxt, tempCol},
+      {icon_2075, nullptr,                humTxt, humCol},
       {icon_234,  nullptr,                uvTxt,  uvColor},
   };
   const int itemCount = sizeof(items) / sizeof(items[0]);
 
   const int ICON_TEXT_GAP = 2;
-  const int ITEM_GAP = 6;
+  const int ITEM_GAP = 10;   // wider gap so each value stands alone
 
   int totalW = 0;
   for (int i = 0; i < itemCount; i++)
@@ -1384,13 +1390,14 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
     totalW += 8 + ICON_TEXT_GAP + getTextWidth(items[i].text, 0) + ITEM_GAP;
   }
 
-  // Time-based scroll: 25 px/sec (40 ms per pixel). Wraps modulo totalW so
-  // the marquee loops seamlessly.
-  const uint32_t period = (uint32_t)totalW * 40;
-  const int scrollOffset = (int)((millis() % period) / 40);
+  // Slow scroll: ~10 px/sec = 100 ms per pixel. millis() % ensures a
+  // seamless loop over the total strip width.
+  const uint32_t MS_PER_PX = 100;
+  const uint32_t period = (uint32_t)totalW * MS_PER_PX;
+  const int scrollOffset = (int)((millis() % period) / MS_PER_PX);
 
   int cx = -scrollOffset;
-  const int y = 24;
+  const int y = 22;
   for (int pass = 0; pass < 2 && cx < 64; pass++)
   {
     for (int i = 0; i < itemCount && cx < 64; i++)
@@ -1423,9 +1430,8 @@ void MatrixDisplayUi::drawGrid()
   if (!gridInitialised)
     return;
   this->matrix->clear();
-  drawBigClock(this->matrix);
+  drawClockRow(this->matrix);
   drawWeekdayLine(this->matrix);
-  drawDateRow(this->matrix);
   drawMarquee(this->matrix, &this->state);
   CURRENT_APP = "Home";
   currentCustomApp = "";
