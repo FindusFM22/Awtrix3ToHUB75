@@ -1302,6 +1302,9 @@ bool universe2_complete = false;
 
 void DisplayManager_::tick()
 {
+#ifdef DISPLAY_HUB75
+  hub75BrightnessSweepTick();
+#endif
   if (GAME_ACTIVE)
   {
     GameManager.tick();
@@ -2341,6 +2344,43 @@ void DisplayManager_::hub75Checkerboard(uint32_t rgbA, uint32_t rgbB, uint32_t d
   paint();
   dma_display->flipDMABuffer();
   hub75FillLockUntil = durationMs ? (millis() + durationMs) : 0;
+}
+
+// Brightness sweep state. hub75BrightnessSweep() sets the period and the
+// start timestamp; the tick function called from the main loop maps the
+// elapsed time in the period to a triangular 0..255..0 ramp and pushes it
+// to the panel via setBrightness8().
+static uint32_t hub75SweepCycleMs = 0;
+static uint32_t hub75SweepStartMs = 0;
+
+void DisplayManager_::hub75BrightnessSweep(uint32_t cycleMs)
+{
+  hub75SweepCycleMs = cycleMs;
+  hub75SweepStartMs = millis();
+  if (cycleMs == 0 && dma_display)
+  {
+    // Stop: restore the app-configured brightness.
+    setBrightness(BRIGHTNESS);
+  }
+}
+
+void DisplayManager_::hub75BrightnessSweepTick()
+{
+  if (hub75SweepCycleMs == 0 || !dma_display)
+    return;
+  const uint32_t elapsed = (millis() - hub75SweepStartMs) % hub75SweepCycleMs;
+  const uint32_t half = hub75SweepCycleMs / 2;
+  uint32_t phase = elapsed;
+  bool rising = true;
+  if (elapsed >= half)
+  {
+    phase = elapsed - half;
+    rising = false;
+  }
+  const uint8_t bri = rising
+                          ? (uint8_t)((phase * 255) / (half ? half : 1))
+                          : (uint8_t)(255 - (phase * 255) / (half ? half : 1));
+  dma_display->setBrightness8(bri);
 }
 #endif
 

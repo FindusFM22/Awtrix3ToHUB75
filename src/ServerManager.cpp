@@ -170,6 +170,14 @@ void addHandler()
                        DisplayManager.hub75Checkerboard(ra, rb, dur);
                        mws.webserver->send(200, F("text/plain"), F("OK"));
                    });
+    // Debug: triangular brightness sweep 0..255..0. cycleMs = full period.
+    // Usage: POST /api/hub75/brisweep?ms=4000   (0 stops and restores app brightness)
+    mws.addHandler("/api/hub75/brisweep", HTTP_ANY, []()
+                   {
+                       uint32_t ms = mws.webserver->hasArg("ms") ? mws.webserver->arg("ms").toInt() : 4000;
+                       DisplayManager.hub75BrightnessSweep(ms);
+                       mws.webserver->send(200, F("text/plain"), F("OK"));
+                   });
 #endif
     mws.addHandler("/api/rtttl", HTTP_POST, []()
                    { mws.webserver->send(200,F("text/plain"),F("OK")); PeripheryManager.playRTTTLString(mws.webserver->arg("plain").c_str()); });

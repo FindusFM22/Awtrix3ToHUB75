@@ -105,6 +105,12 @@ public:
     // shift / stretch anywhere on the panel (adjacent-cell contrast is the
     // most sensitive test for HUB75 timing issues).
     void hub75Checkerboard(uint32_t rgbA, uint32_t rgbB, uint32_t durationMs = 0);
+    // Debug helper: brightness ramp 0..255..0. Non-blocking — must be
+    // driven by hub75BrightnessSweepTick() from the main loop. cycleMs =
+    // full 0→255→0 period. Set cycleMs=0 to stop and restore normal
+    // brightness handling.
+    void hub75BrightnessSweep(uint32_t cycleMs);
+    void hub75BrightnessSweepTick();
 #endif
     bool indicatorParser(uint8_t indicator, const char *json);
     void showSleepAnimation();
