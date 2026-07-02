@@ -1186,6 +1186,34 @@ static void gridWidgetOutdoor(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *s
     gridDrawWidget(matrix, gifPlayer, x, y, buf, TEMP_COLOR, gridDrawOutdoorIcon);
 }
 
+// UV widget: sun icon + UV index number (0..11+). Uses icon_234 (sun) as
+// the icon since there is no dedicated UV icon. Shows "UV?" while
+// OUTDOOR_UV is -1 (fresh boot before first fetch, or a wttr.in response
+// without a UV field). Color scales with the index: green ≤2, yellow 3-5,
+// orange 6-7, red 8-10, purple ≥11 — matches the WHO UV-index colour code.
+static void gridWidgetUV(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state,
+                         int16_t x, int16_t y, GifPlayer *gifPlayer)
+{
+    (void)state; (void)gifPlayer;
+    char buf[8];
+    uint32_t color;
+    if (OUTDOOR_UV < 0)
+    {
+        snprintf(buf, sizeof(buf), "UV?");
+        color = 0x808080;  // grey while unknown
+    }
+    else
+    {
+        snprintf(buf, sizeof(buf), "UV%d", OUTDOOR_UV);
+        if      (OUTDOOR_UV <= 2)  color = 0x00C800;  // green
+        else if (OUTDOOR_UV <= 5)  color = 0xFFC800;  // yellow
+        else if (OUTDOOR_UV <= 7)  color = 0xFF8000;  // orange
+        else if (OUTDOOR_UV <= 10) color = 0xFF0000;  // red
+        else                       color = 0xA000FF;  // purple (extreme)
+    }
+    gridDrawIconText(matrix, icon_234, x, y, buf, color);
+}
+
 struct GridSlot
 {
   int16_t x, y;
@@ -1195,12 +1223,73 @@ struct GridSlot
 static GridSlot gridSlots[4];
 static bool gridInitialised = false;
 
+// Fullscreen "big clock" page: shows the date at the top (WD DD.MM) and a
+// large HH:MM below it, using Adafruit_GFX's built-in font at size=2 so each
+// glyph is 12x16. The 5-char "HH:MM" is 60 px wide → fits 64 px with 2 px
+// margin. Uses setTextSize on the matrix directly (bypasses the custom
+// pixel-fonts used elsewhere) so the glyphs actually scale.
+static void gridPageFullscreenClock(FastLED_NeoMatrix *matrix, GifPlayer *gifPlayer)
+{
+  (void)gifPlayer;
+  matrix->fillScreen(0);
+
+  // --- Date row (small, top) ---
+  char date[16];
+  struct tm *now = timer_localtime();
+  const char *weekdays[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+  snprintf(date, sizeof(date), "%s %02d.%02d",
+           weekdays[now->tm_wday], now->tm_mday, now->tm_mon + 1);
+  const uint16_t dateW = (uint16_t)getTextWidth(date, 0);
+  const int dateX = (64 - (int)dateW) / 2;
+  if (DATE_COLOR > 0)
+    DisplayManager.setTextColor(DATE_COLOR);
+  else
+    DisplayManager.resetTextColor();
+  DisplayManager.setCursor(dateX, 6);
+  DisplayManager.matrixPrint(date);
+
+  // --- Time row (large, centred vertically in the lower half) ---
+  const char *fmt = "%H:%M";
+  if (TIME_FORMAT.length() >= 3 && TIME_FORMAT[2] == ' ')
+    fmt = (timer_time() % 2) ? "%H %M" : "%H:%M";
+  char clock[8];
+  strftime(clock, sizeof(clock), fmt, timer_localtime());
+
+  if (TIME_COLOR > 0)
+    matrix->setTextColor(TIME_COLOR);
+  else
+    matrix->setTextColor(0xFFFF);  // 16-bit white (matrix uses 565)
+  matrix->setTextSize(2);
+  // "HH:MM" at size 2 = 5 * 6 * 2 - 1 * 2 = 58 px wide, 14 px tall.
+  // Center: x = (64-58)/2 = 3; y aligned so text baseline sits at row 24.
+  const int clockX = (64 - 58) / 2;
+  const int clockY = 14;
+  matrix->setCursor(clockX, clockY);
+  matrix->print(clock);
+  matrix->setTextSize(1);
+}
+
+// Page rotator: alternate between fullscreen clock and 2x2 grid every 5 s.
+// millis()/5000 & 1 → 0 (clock) or 1 (grid). Grid page uses the existing
+// gridSlots[] callbacks.
+enum GridPage { PAGE_CLOCK = 0, PAGE_GRID = 1 };
+static GridPage currentPage()
+{
+  return ((millis() / 5000) % 2 == 0) ? PAGE_CLOCK : PAGE_GRID;
+}
+
 // Called from DisplayManager_::setup() once the app callbacks are known.
 // Kept here rather than in DisplayManager.cpp so all grid layout constants
 // live in one place.
 void MatrixDisplayUi_initGrid()
 {
-  gridSlots[0] = {0,  4,  gridWidgetTime,    &gif1};
+  // Slot layout for the "grid" page:
+  //   TL: UV index   (the fullscreen page shows the clock — no need for
+  //                   a second clock in the corner)
+  //   TR: indoor temperature
+  //   BL: humidity
+  //   BR: outdoor temperature (dynamic weather icon)
+  gridSlots[0] = {0,  4,  gridWidgetUV,      &gif1};
   gridSlots[1] = {32, 4,  gridWidgetTemp,    &gif2};
   gridSlots[2] = {0,  20, gridWidgetHum,     &gif1};
   gridSlots[3] = {32, 20, gridWidgetOutdoor, &gif2};
@@ -1211,15 +1300,23 @@ void MatrixDisplayUi::drawGrid()
 {
   if (!gridInitialised)
     return;
-  for (int i = 0; i < 4; i++)
+  if (currentPage() == PAGE_CLOCK)
   {
-    const GridSlot &s = gridSlots[i];
-    s.callback(this->matrix, &this->state, s.x, s.y, s.gif);
+    gridPageFullscreenClock(this->matrix, &gif1);
+    CURRENT_APP = "Clock";
+  }
+  else
+  {
+    for (int i = 0; i < 4; i++)
+    {
+      const GridSlot &s = gridSlots[i];
+      s.callback(this->matrix, &this->state, s.x, s.y, s.gif);
+    }
+    CURRENT_APP = "Grid";
   }
   // App callbacks each set CURRENT_APP to their own name as a side effect.
   // In grid mode the value is meaningless — set a fixed label so MQTT
   // consumers see "Grid" instead of a race between the four names.
-  CURRENT_APP = "Grid";
   currentCustomApp = "";
 }
 #endif

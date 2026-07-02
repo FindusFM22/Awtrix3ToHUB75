@@ -378,6 +378,7 @@ bool  OUTDOOR_TEMP_VALID = false;
 float OUTDOOR_LAT = 49.0069f;  // Karlsruhe
 float OUTDOOR_LON = 8.4037f;
 String OUTDOOR_ICON = "unknown";
+int   OUTDOOR_UV = -1;
 bool  SHOW_OUTDOOR = true;
 #endif
 bool SHOW_SECONDS = true;

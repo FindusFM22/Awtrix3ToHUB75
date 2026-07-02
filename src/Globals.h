@@ -59,6 +59,7 @@ extern bool  OUTDOOR_TEMP_VALID;
 extern float OUTDOOR_LAT;
 extern float OUTDOOR_LON;
 extern String OUTDOOR_ICON;   // one of: clear cloudy partlycloudy rain snow storm fog unknown
+extern int   OUTDOOR_UV;      // UV index 0..11+, -1 = unknown
 extern bool  SHOW_OUTDOOR;
 #endif
 extern bool SHOW_SECONDS;

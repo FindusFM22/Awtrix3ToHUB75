@@ -551,7 +551,8 @@ void PeripheryManager_::fetchOutdoorTemp()
     char url[96];
     // 4 decimal places is well below wttr.in's practical location resolution
     // and keeps the URL comfortably under any header size limits.
-    snprintf(url, sizeof(url), "http://wttr.in/%.4f,%.4f?format=%%t|%%C&m",
+    // Format: "+18°C|Partly cloudy|3" — %t (temp) | %C (condition) | %u (UV index)
+    snprintf(url, sizeof(url), "http://wttr.in/%.4f,%.4f?format=%%t|%%C|%%u&m",
              OUTDOOR_LAT, OUTDOOR_LON);
     http.begin(url);
     http.setTimeout(5000);
@@ -563,10 +564,13 @@ void PeripheryManager_::fetchOutdoorTemp()
     {
         String body = http.getString();
         body.trim();
-        // Split at "|" between "%t" and "%C".
-        int sep = body.indexOf('|');
-        String tPart = (sep > 0) ? body.substring(0, sep) : body;
-        String cPart = (sep > 0) ? body.substring(sep + 1) : "";
+        // Split at "|" delimiters.
+        int sep1 = body.indexOf('|');
+        int sep2 = (sep1 >= 0) ? body.indexOf('|', sep1 + 1) : -1;
+        String tPart = (sep1 > 0) ? body.substring(0, sep1) : body;
+        String cPart = (sep1 > 0 && sep2 > 0) ? body.substring(sep1 + 1, sep2)
+                     : (sep1 > 0) ? body.substring(sep1 + 1) : "";
+        String uPart = (sep2 > 0) ? body.substring(sep2 + 1) : "";
 
         tPart.replace("+", "");
         // wttr.in returns "°C" (UTF-8). Strip everything from the ° onward.
@@ -574,6 +578,7 @@ void PeripheryManager_::fetchOutdoorTemp()
         if (deg < 0) deg = tPart.indexOf("°");
         if (deg > 0) tPart = tPart.substring(0, deg);
         tPart.trim();
+        uPart.trim();
 
         float parsed = tPart.toFloat();
         // toFloat returns 0.0 on failure — accept 0 only if the string was "0" or "0.0"
@@ -583,6 +588,11 @@ void PeripheryManager_::fetchOutdoorTemp()
             OUTDOOR_TEMP = parsed;
             OUTDOOR_ICON = weatherTextToIconSlug(cPart);
             OUTDOOR_TEMP_VALID = true;
+            // UV index: wttr.in returns an integer 0..11+; empty or non-numeric → -1
+            if (uPart.length() > 0 && isdigit((unsigned char)uPart[0]))
+                OUTDOOR_UV = uPart.toInt();
+            else
+                OUTDOOR_UV = -1;
         }
     }
     http.end();
