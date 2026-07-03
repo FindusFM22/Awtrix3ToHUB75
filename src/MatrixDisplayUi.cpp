@@ -44,8 +44,13 @@ extern const uint8_t bigdigits_mask[12][7];
 
 GifPlayer gif1;
 GifPlayer gif2;
-GifPlayer gif3;  // third player for marquee: prevents gif1/gif2 state collision
-GifPlayer gif4;  // fourth player for UV icon in slot 4
+GifPlayer gif3;  // marquee: three players cover the max simultaneously
+                 // visible dynamic slots (64px wide / ~20px per slot ≈ 3).
+                 // Players are assigned per-slot cyclically so a slot always
+                 // gets the same player and its GifPlayer file-name cache
+                 // stays warm.
+GifPlayer gif4;  // fourth player for slot 4 (UV): keeps slot 1 (indoor hum)
+                 // and slot 4 on separate players despite (i%3) collision.
 
 MatrixDisplayUi::MatrixDisplayUi(FastLED_NeoMatrix *matrix)
 {
@@ -1444,7 +1449,7 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
       {nullptr, gridDrawIconIndoorTemp, inTempTxt, 0xFFFFFF},
       {nullptr, gridDrawIconIndoorHum,  inHumTxt,  0xFFFFFF},
       {nullptr, gridDrawOutdoorIcon,    outTxt,    0xFFFFFF},
-      {icon_2075, nullptr,              outHumTxt, 0xFFFFFF},
+      {icon_2423, nullptr,              outHumTxt, 0xFFFFFF},
       {nullptr, gridDrawIconUv,         uvTxt,     0xFFFFFF},
   };
   const int itemCount = sizeof(items) / sizeof(items[0]);
@@ -1487,13 +1492,11 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
           matrix->drawRGBBitmap(cx, y, (uint16_t *)it.icon, 8, 8);
         else if (it.drawDynamic != nullptr)
         {
-          // Each dynamic slot gets its own dedicated GifPlayer to avoid
-          // decode-state collisions when multiple icons are visible at once.
-          // Slot 4 is UV (index 4); mapped to gif4. Slot 3 is a static PROGMEM
-          // icon (icon_2075) so no player is needed there.
-          GifPlayer *players[] = {&gif1, &gif2, &gif3, nullptr, &gif4};
-          GifPlayer *p = (i < 5 && players[i] != nullptr) ? players[i] : &gif1;
-          it.drawDynamic(matrix, p, cx, y);
+          // Per-slot player assignment so each icon's filename cache stays
+          // warm. 4 dynamic slots (0,1,2,4) on 4 players — no collisions.
+          // Slot 3 is a static PROGMEM icon (icon_2423) and needs no player.
+          GifPlayer *players[5] = {&gif1, &gif2, &gif3, nullptr, &gif4};
+          it.drawDynamic(matrix, players[i], cx, y);
         }
         DisplayManager.setTextColor(it.color);
         DisplayManager.setCursor(cx + 8 + ICON_TEXT_GAP, y + 6);
