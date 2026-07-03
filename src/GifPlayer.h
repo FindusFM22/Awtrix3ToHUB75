@@ -74,6 +74,14 @@ public:
   int rectHeight;
   int colorCount;
   _RGB gifPalette[256];
+  // Snapshot of the Global Color Table. Some GIFs (e.g. LaMetric icon 39041)
+  // interleave frames with Local Color Tables (LCT) and frames without.
+  // When a frame's LCT overwrites gifPalette, subsequent frames that expect
+  // the GCT would otherwise render with the leftover LCT — visible as blue
+  // droplet suddenly appearing red. Restoring from globalPalette when no LCT
+  // is present keeps every frame's colours correct.
+  _RGB globalPalette[256];
+  int globalColorCount = 0;
   byte lzwImageData[1280];
   char tempBuffer[260];
   File file;
@@ -223,6 +231,13 @@ public:
       colorCount = 1 << colorBits;
       int colorTableBytes = sizeof(_RGB) * colorCount;
       readIntoBuffer(gifPalette, colorTableBytes);
+    }
+    else if (globalColorCount > 0)
+    {
+      // No LCT for this frame — restore the GCT snapshot in case a
+      // previous frame's LCT clobbered gifPalette.
+      colorCount = globalColorCount;
+      memcpy(gifPalette, globalPalette, sizeof(_RGB) * globalColorCount);
     }
 
     if (keyFrame)
@@ -569,6 +584,8 @@ public:
 
       memset(FrameBuffer, 0, sizeof(FrameBuffer));
       memset(gifPalette, 0, sizeof(gifPalette));
+      memset(globalPalette, 0, sizeof(globalPalette));
+      globalColorCount = 0;
       memset(lzwImageData, 0, sizeof(lzwImageData));
       memset(imageData, 0, sizeof(imageData));
       memset(imageDataBU, 0, sizeof(imageDataBU));
@@ -628,6 +645,9 @@ public:
       colorCount = 1 << ((lsdPackedField & 7) + 1);
       int colorTableBytes = sizeof(_RGB) * colorCount;
       readIntoBuffer(gifPalette, colorTableBytes);
+      // Snapshot for later frames that lack a local palette.
+      memcpy(globalPalette, gifPalette, colorTableBytes);
+      globalColorCount = colorCount;
     }
   }
 
