@@ -2092,7 +2092,7 @@ void DisplayManager_::gammaCorrection()
 {
   float gamma = logMap(actualBri, 2, 180, 0.535, 2.3, 1.9);
   memcpy(ledsCopy, leds, sizeof(leds));
-  for (int i = 0; i < 256; i++)
+  for (int i = 0; i < MATRIX_WIDTH * MATRIX_HEIGHT; i++)
   {
     leds[i] = applyGamma_video(leds[i], gamma);
   }
@@ -2960,6 +2960,9 @@ CRGB *DisplayManager_::getLedsCopy()
 {
   return ledsCopy;
 }
+
+int DisplayManager_::getMatrixWidth()  { return MATRIX_WIDTH; }
+int DisplayManager_::getMatrixHeight() { return MATRIX_HEIGHT; }
 
 String DisplayManager_::getEffectNames()
 {

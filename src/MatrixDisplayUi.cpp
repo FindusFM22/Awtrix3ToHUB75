@@ -1361,38 +1361,6 @@ static void drawWeekdayLine(FastLED_NeoMatrix *matrix)
   }
 }
 
-// Date row at y=18: 9x8 calendar box left, "WD DD.MM" text to the right.
-static void drawDateRow(FastLED_NeoMatrix *matrix)
-{
-  const int BOX_X = 0;
-  const int BOX_Y = 18;
-
-  DisplayManager.drawFilledRect(BOX_X, BOX_Y, 9, 8, CALENDAR_BODY_COLOR);
-  DisplayManager.drawFilledRect(BOX_X, BOX_Y, 9, 2, CALENDAR_HEADER_COLOR);
-
-  struct tm *now = timer_localtime();
-  char dayStr[3];
-  snprintf(dayStr, sizeof(dayStr), "%d", now->tm_mday);
-  const int dayOffX = (now->tm_mday < 10) ? 3 : 1;
-  DisplayManager.setTextColor(CALENDAR_TEXT_COLOR);
-  DisplayManager.setCursor(BOX_X + dayOffX, BOX_Y + 7);
-  DisplayManager.matrixPrint(dayStr);
-
-  const char *weekdays[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-  char date[16];
-  snprintf(date, sizeof(date), "%s %02d.%02d",
-           weekdays[now->tm_wday], now->tm_mday, now->tm_mon + 1);
-  if (DATE_COLOR > 0)
-    DisplayManager.setTextColor(DATE_COLOR);
-  else
-    DisplayManager.resetTextColor();
-  const uint16_t textW = (uint16_t)getTextWidth(date, 0);
-  const int availW = 64 - 11;
-  const int textX = 11 + (availW - textW) / 2;
-  DisplayManager.setCursor(textX, BOX_Y + 6);
-  DisplayManager.matrixPrint(date);
-}
-
 // Marquee entry: an 8x8 icon (either a static const uint16_t[] pointer, or
 // a dynamic draw function for the outdoor weather GIF) plus a short text
 // label rendered with the AWTRIX pixel font.
@@ -1453,10 +1421,6 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
   else if (OUTDOOR_UV <= 10)  uvColor = 0xFF0000;
   else                        uvColor = 0xA000FF;
 
-  const uint32_t tempCol    = (TEMP_COLOR > 0) ? TEMP_COLOR : 0xFFFFFF;
-  const uint32_t humCol     = (HUM_COLOR  > 0) ? HUM_COLOR  : 0xFFFFFF;
-  const uint32_t outdoorCol = 0x00BFFF;  // sky blue for outdoor items
-
   MarqueeItem items[] = {
       {nullptr, gridDrawIconIndoorTemp, inTempTxt, 0xFFFFFF},
       {nullptr, gridDrawIconIndoorHum,  inHumTxt,  0xFFFFFF},
@@ -1483,10 +1447,11 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
 
   int cx = -scrollOffset;
   const int y = 22;
-  for (int pass = 0; pass < 2 && cx < 64; pass++)
+  for (int pass = 0; pass < 2; pass++)
   {
-    for (int i = 0; i < itemCount && cx < 64; i++)
+    for (int i = 0; i < itemCount; i++)
     {
+      if (cx >= 64) break;
       const MarqueeItem &it = items[i];
       const int textW = getTextWidth(it.text, 0);
       const int itemW = 8 + ICON_TEXT_GAP + textW + ITEM_GAP;
@@ -1495,13 +1460,21 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
         if (it.icon != nullptr)
           matrix->drawRGBBitmap(cx, y, (uint16_t *)it.icon, 8, 8);
         else if (it.drawDynamic != nullptr)
-          it.drawDynamic(matrix, (i % 2 == 0) ? &gif2 : &gif3, cx, y);
+        {
+          // Each dynamic slot gets its own dedicated GifPlayer to avoid
+          // decode-state collisions when multiple icons are visible at once.
+          GifPlayer *players[] = {&gif1, &gif2, &gif3};
+          it.drawDynamic(matrix, players[i < 3 ? i : 0], cx, y);
+        }
         DisplayManager.setTextColor(it.color);
         DisplayManager.setCursor(cx + 8 + ICON_TEXT_GAP, y + 6);
         DisplayManager.matrixPrint(it.text);
       }
       cx += itemW;
     }
+    // After pass 0, reset cx to where the virtual strip continues so the
+    // wrap fills any gap at the right edge of the display.
+    if (pass == 0) cx = totalW - scrollOffset;
   }
 }
 

@@ -263,7 +263,7 @@ void addHandler()
     mws.addHandler("/api/screen", HTTP_GET, []()
                    {
                      CRGB *leds = DisplayManager.getLedsCopy();
-                     const int total = 64 * 32;
+                     const int total = DisplayManager.getMatrixWidth() * DisplayManager.getMatrixHeight();
                      // Build in 512-byte chunks to avoid large heap allocation
                      // while still batching writes (2048 individual sendContent
                      // calls block the WiFi stack).
