@@ -818,7 +818,14 @@ bool DisplayManager_::generateCustomPage(const String &name, JsonObject doc, boo
 bool DisplayManager_::generateNotification(uint8_t source, const char *json)
 {
   // source: 0=MQTT, 1=HTTP
-  DynamicJsonDocument doc(6144);
+  // Static buffer in BSS avoids fragmenting the heap: allocating 6 KB
+  // contiguous via DynamicJsonDocument fails after some uptime once the
+  // heap has fragmented, so the panel could only accept notifications right
+  // after boot. Static buffer costs 6 KB permanent RAM but makes
+  // notifications reliable indefinitely. Not thread-safe — the ESP32
+  // WebServer/MQTT tasks call this serially, which is our invariant.
+  static StaticJsonDocument<6144> doc;
+  doc.clear();
   DeserializationError error = deserializeJson(doc, json);
   if (error)
   {
