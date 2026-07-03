@@ -261,7 +261,33 @@ void addHandler()
     mws.addHandler("/api/stats", HTTP_GET, []()
                    { mws.webserver->send_P(200, "application/json", DisplayManager.getStats().c_str()); });
     mws.addHandler("/api/screen", HTTP_GET, []()
-                   { mws.webserver->send_P(200, "application/json", DisplayManager.ledsAsJson().c_str()); });
+                   {
+                     CRGB *leds = DisplayManager.getLedsCopy();
+                     const int total = 64 * 32;
+                     // Build in 512-byte chunks to avoid large heap allocation
+                     // while still batching writes (2048 individual sendContent
+                     // calls block the WiFi stack).
+                     char chunk[512];
+                     int pos = 0;
+                     mws.webserver->setContentLength(CONTENT_LENGTH_UNKNOWN);
+                     mws.webserver->send(200, "application/json", "");
+                     mws.webserver->sendContent("[", 1);
+                     for (int i = 0; i < total; i++)
+                     {
+                       uint32_t c = ((uint32_t)leds[i].r << 16) |
+                                    ((uint32_t)leds[i].g << 8)  |
+                                    leds[i].b;
+                       pos += snprintf(chunk + pos, sizeof(chunk) - pos,
+                                       i ? ",%lu" : "%lu", (unsigned long)c);
+                       if (pos > 450 || i == total - 1)
+                       {
+                         mws.webserver->sendContent(chunk, pos);
+                         pos = 0;
+                       }
+                     }
+                     mws.webserver->sendContent("]", 1);
+                     mws.webserver->sendContent("", 0);
+                   });
     mws.addHandler("/api/indicator1", HTTP_POST, []()
                    { 
                     if (DisplayManager.indicatorParser(1,mws.webserver->arg("plain").c_str())){

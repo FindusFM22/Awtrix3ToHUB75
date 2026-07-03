@@ -44,6 +44,7 @@ extern const uint8_t bigdigits_mask[12][7];
 
 GifPlayer gif1;
 GifPlayer gif2;
+GifPlayer gif3;  // third player for marquee: prevents gif1/gif2 state collision
 
 MatrixDisplayUi::MatrixDisplayUi(FastLED_NeoMatrix *matrix)
 {
@@ -57,6 +58,7 @@ void MatrixDisplayUi::init()
   this->matrix->setBrightness(70);
   gif1.setMatrix(this->matrix);
   gif2.setMatrix(this->matrix);
+  gif3.setMatrix(this->matrix);
 }
 
 void MatrixDisplayUi::setTargetFPS(uint8_t fps)
@@ -1111,7 +1113,51 @@ static void gridDrawOutdoorIcon(FastLED_NeoMatrix *matrix, GifPlayer *gifPlayer,
     matrix->drawRGBBitmap(x, y, (uint16_t *)icon_234, 8, 8);
 }
 
-// Same as gridDrawIconText but the icon-draw function is passed in so a
+// Draw a static LittleFS icon by ID string. Falls back to icon_234 if missing.
+// Each caller passes its own static File so the cache doesn't collide.
+static void gridDrawLittleFSIcon(FastLED_NeoMatrix *matrix, GifPlayer *gifPlayer,
+                                 int16_t x, int16_t y, const char *id,
+                                 fs::File &cachedFile)
+{
+    if (!cachedFile)
+    {
+        const String base = String("/ICONS/") + id;
+        if (LittleFS.exists(base + ".gif"))
+            cachedFile = LittleFS.open(base + ".gif");
+        else if (LittleFS.exists(base + ".jpg"))
+            cachedFile = LittleFS.open(base + ".jpg");
+    }
+    if (cachedFile)
+    {
+        const String name = cachedFile.name();
+        if (name.endsWith(".jpg"))
+        {
+            DisplayManager.drawJPG(x, y, cachedFile);
+            cachedFile.seek(0);
+        }
+        else
+        {
+            gifPlayer->minFrameDelay = 500;
+            gifPlayer->playGif(x, y, &cachedFile);
+        }
+        return;
+    }
+    matrix->drawRGBBitmap(x, y, (uint16_t *)icon_234, 8, 8);
+}
+
+static void gridDrawIconIndoorHum(FastLED_NeoMatrix *matrix, GifPlayer *gifPlayer,
+                                  int16_t x, int16_t y)
+{
+    static fs::File f;
+    gridDrawLittleFSIcon(matrix, gifPlayer, x, y, "39041", f);
+}
+
+static void gridDrawIconIndoorTemp(FastLED_NeoMatrix *matrix, GifPlayer *gifPlayer,
+                                   int16_t x, int16_t y)
+{
+    static fs::File f;
+    gridDrawLittleFSIcon(matrix, gifPlayer, x, y, "70915", f);
+}
 // widget with a dynamic icon (like Outdoor's weather-based GIF) can reuse
 // the centering math without duplicating it.
 static void gridDrawWidget(FastLED_NeoMatrix *matrix,
@@ -1246,71 +1292,57 @@ static inline uint16_t rgb888to565(uint32_t c)
 // rectangle, then punch black pixels where the mask bits are set. Doing
 // this 2x on the y axis gives 6x14 glyphs (was 6x7) without needing a new
 // glyph table. Total digit block width unchanged (32 px).
+// Calendar box (9×8) + bigdigits HH:MM (34px wide, 7px tall), rows 0–7.
 static void drawClockRow(FastLED_NeoMatrix *matrix)
 {
-  // --- Format HH:MM the same way TimeApp does, with blinking colon. ---
   char t[8];
   const char *fmt = "%H:%M";
   if (TIME_FORMAT.length() >= 3 && TIME_FORMAT[2] == ' ')
     fmt = (timer_time() % 2) ? "%H %M" : "%H:%M";
   strftime(t, sizeof(t), fmt, timer_localtime());
-  // Space→';' remaps to the "blank" glyph in bigdigits_mask (index 11).
   if (t[2] == ' ') t[2] = ';';
   if (t[0] == ' ') t[0] = ';';
 
-  // --- Layout: 9-wide box, 2 px gap, 32-wide digits → 43 px, centred. ---
-  const int BOX_W = 9;
-  const int BOX_H = 16;
-  const int GAP = 2;
-  const int DIGITS_W = 32;
-  const int DIGITS_H = 14;
-  const int TOTAL_W = BOX_W + GAP + DIGITS_W;   // 43
-  const int OX = (64 - TOTAL_W) / 2;             // 10
+  const int BOX_W    = 9;
+  const int BOX_H    = 8;
+  const int GAP      = 2;
+  const int DIGITS_W = 34;
+  const int OX       = (64 - (BOX_W + GAP + DIGITS_W)) / 2;   // 9
 
-  // --- Calendar box: body + header stripe, both doubled in height. ---
-  DisplayManager.drawFilledRect(OX, 0, BOX_W, BOX_H, CALENDAR_BODY_COLOR);
-  DisplayManager.drawFilledRect(OX, 0, BOX_W, 4, CALENDAR_HEADER_COLOR);
-
-  // Day number inside the box (small font, positioned toward the bottom
-  // half). The bigger box gives room for a 2x-height day number if wanted
-  // later; for now stay with size 1 so single/double digit widths line up.
+  // Calendar box
+  DisplayManager.drawFilledRect(OX, 3, BOX_W, BOX_H, CALENDAR_BODY_COLOR);
+  DisplayManager.drawFilledRect(OX, 3, BOX_W, 2,     CALENDAR_HEADER_COLOR);
   const int mday = timer_localtime()->tm_mday;
   char dayStr[3];
   snprintf(dayStr, sizeof(dayStr), "%d", mday);
-  const int dayOffX = (mday < 10) ? 3 : 1;
   DisplayManager.setTextColor(CALENDAR_TEXT_COLOR);
-  DisplayManager.setCursor(OX + dayOffX, 14);   // baseline y=14 → rendered rows 8-14
+  DisplayManager.setCursor(OX + (mday < 10 ? 3 : 1), 10);
   DisplayManager.matrixPrint(dayStr);
 
-  // --- Digits: solid colour bg + black mask overlay, 2x on the y axis. ---
+  // Bigdigits HH:MM — single height (7 rows), same glyph mapping as TimeApp
   const uint16_t clockColor = (TIME_COLOR > 0) ? rgb888to565(TIME_COLOR) : 0xFFFF;
   const int digitsX = OX + BOX_W + GAP;
-  matrix->fillRect(digitsX, 0, DIGITS_W, DIGITS_H, clockColor);
-
   for (int i = 0; i < 5; i++)
   {
     const int xx = digitsX + i * 7 - (i > 2 ? 2 : 0) - (i == 2);
     const int digit = t[i] - '0';
-    if (digit < 0 || digit > 11) continue;   // guard against malformed strftime output
+    if (digit < 0 || digit > 11) continue;
     const uint8_t *mask = bigdigits_mask[digit];
-    // Each mask row (7 total) covers 6 columns, bits MSB-first in each byte.
-    // Duplicate each row on the y axis to reach 14 rows total.
     for (int row = 0; row < 7; row++)
     {
       const uint8_t byte = mask[row];
       for (int col = 0; col < 6; col++)
       {
         if ((byte >> (7 - col)) & 1)
-        {
-          matrix->drawPixel(xx + col, row * 2,     (uint16_t)0);
-          matrix->drawPixel(xx + col, row * 2 + 1, (uint16_t)0);
-        }
+          matrix->drawPixel(xx + col, row + 3, (uint16_t)0);
+        else
+          matrix->drawPixel(xx + col, row + 3, clockColor);
       }
     }
   }
 }
 
-// Weekday line at y=17: 7 segments, current day highlighted.
+// Weekday line at y=16: 7 segments, current day highlighted.
 static void drawWeekdayLine(FastLED_NeoMatrix *matrix)
 {
   const uint8_t SEG_W = 6;
@@ -1318,15 +1350,47 @@ static void drawWeekdayLine(FastLED_NeoMatrix *matrix)
   const uint8_t COUNT = 7;
   const int stripW = COUNT * SEG_W + (COUNT - 1) * SEG_SPACING;   // 54
   const int START_X = (64 - stripW) / 2;                           // 5
-  const uint8_t Y = 17;
+  const uint8_t Y = 12;
   const uint8_t dayOffset = START_ON_MONDAY ? 0 : 1;
   const int today = (timer_localtime()->tm_wday + 6 + dayOffset) % 7;
   for (int i = 0; i < COUNT; i++)
   {
     const int x = START_X + i * (SEG_W + SEG_SPACING);
-    const uint32_t color = (i == today) ? WDC_ACTIVE : WDC_INACTIVE;
+    const uint16_t color = (i == today) ? rgb888to565(WDC_ACTIVE) : rgb888to565(WDC_INACTIVE);
     matrix->drawFastHLine(x, Y, SEG_W, color);
   }
+}
+
+// Date row at y=18: 9x8 calendar box left, "WD DD.MM" text to the right.
+static void drawDateRow(FastLED_NeoMatrix *matrix)
+{
+  const int BOX_X = 0;
+  const int BOX_Y = 18;
+
+  DisplayManager.drawFilledRect(BOX_X, BOX_Y, 9, 8, CALENDAR_BODY_COLOR);
+  DisplayManager.drawFilledRect(BOX_X, BOX_Y, 9, 2, CALENDAR_HEADER_COLOR);
+
+  struct tm *now = timer_localtime();
+  char dayStr[3];
+  snprintf(dayStr, sizeof(dayStr), "%d", now->tm_mday);
+  const int dayOffX = (now->tm_mday < 10) ? 3 : 1;
+  DisplayManager.setTextColor(CALENDAR_TEXT_COLOR);
+  DisplayManager.setCursor(BOX_X + dayOffX, BOX_Y + 7);
+  DisplayManager.matrixPrint(dayStr);
+
+  const char *weekdays[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+  char date[16];
+  snprintf(date, sizeof(date), "%s %02d.%02d",
+           weekdays[now->tm_wday], now->tm_mday, now->tm_mon + 1);
+  if (DATE_COLOR > 0)
+    DisplayManager.setTextColor(DATE_COLOR);
+  else
+    DisplayManager.resetTextColor();
+  const uint16_t textW = (uint16_t)getTextWidth(date, 0);
+  const int availW = 64 - 11;
+  const int textX = 11 + (availW - textW) / 2;
+  DisplayManager.setCursor(textX, BOX_Y + 6);
+  DisplayManager.matrixPrint(date);
 }
 
 // Marquee entry: an 8x8 icon (either a static const uint16_t[] pointer, or
@@ -1345,11 +1409,16 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
   (void)state;
 
   // Build value strings for this frame.
-  char inTxt[8], outTxt[8], humTxt[8], uvTxt[8];
+  char inTempTxt[8], inHumTxt[8], outTxt[8], outHumTxt[8], uvTxt[8];
   {
     char n[4];
     gridFormatInt2((int)CURRENT_TEMP, n);
-    snprintf(inTxt, sizeof(inTxt), "%s%s", n, utf8ascii(IS_CELSIUS ? "°C" : "°F").c_str());
+    snprintf(inTempTxt, sizeof(inTempTxt), "%s%s", n, utf8ascii(IS_CELSIUS ? "°C" : "°F").c_str());
+  }
+  {
+    char n[4];
+    gridFormatInt2((int)CURRENT_HUM, n);
+    snprintf(inHumTxt, sizeof(inHumTxt), "%s%%", n);
   }
   if (OUTDOOR_TEMP_VALID)
   {
@@ -1361,10 +1430,15 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
   {
     snprintf(outTxt, sizeof(outTxt), "--");
   }
+  if (OUTDOOR_HUM >= 0)
   {
     char n[4];
-    gridFormatInt2((int)CURRENT_HUM, n);
-    snprintf(humTxt, sizeof(humTxt), "%s%%", n);
+    gridFormatInt2(OUTDOOR_HUM, n);
+    snprintf(outHumTxt, sizeof(outHumTxt), "%s%%", n);
+  }
+  else
+  {
+    snprintf(outHumTxt, sizeof(outHumTxt), "--%");
   }
   if (OUTDOOR_UV >= 0)
     snprintf(uvTxt, sizeof(uvTxt), "UV%d", OUTDOOR_UV);
@@ -1379,17 +1453,16 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
   else if (OUTDOOR_UV <= 10)  uvColor = 0xFF0000;
   else                        uvColor = 0xA000FF;
 
-  // TEMP_COLOR / HUM_COLOR default to 0 (= "use default text color"), which
-  // for setTextColor(0) means BLACK — invisible on the dark panel. Coerce
-  // 0 to white so the marquee is always legible regardless of user config.
-  const uint32_t tempCol = (TEMP_COLOR > 0) ? TEMP_COLOR : 0xFFFFFF;
-  const uint32_t humCol  = (HUM_COLOR  > 0) ? HUM_COLOR  : 0xFFFFFF;
+  const uint32_t tempCol    = (TEMP_COLOR > 0) ? TEMP_COLOR : 0xFFFFFF;
+  const uint32_t humCol     = (HUM_COLOR  > 0) ? HUM_COLOR  : 0xFFFFFF;
+  const uint32_t outdoorCol = 0x00BFFF;  // sky blue for outdoor items
 
   MarqueeItem items[] = {
-      {icon_234,  nullptr,                inTxt,  tempCol},
-      {nullptr,   gridDrawOutdoorIcon,    outTxt, tempCol},
-      {icon_2075, nullptr,                humTxt, humCol},
-      {icon_234,  nullptr,                uvTxt,  uvColor},
+      {nullptr, gridDrawIconIndoorTemp, inTempTxt, 0xFFFFFF},
+      {nullptr, gridDrawIconIndoorHum,  inHumTxt,  0xFFFFFF},
+      {nullptr, gridDrawOutdoorIcon,    outTxt,    0xFFFFFF},
+      {icon_2075, nullptr,              outHumTxt, 0xFFFFFF},
+      {icon_234,  nullptr,              uvTxt,     0xFFFFFF},
   };
   const int itemCount = sizeof(items) / sizeof(items[0]);
 
@@ -1422,7 +1495,7 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
         if (it.icon != nullptr)
           matrix->drawRGBBitmap(cx, y, (uint16_t *)it.icon, 8, 8);
         else if (it.drawDynamic != nullptr)
-          it.drawDynamic(matrix, &gif2, cx, y);
+          it.drawDynamic(matrix, (i % 2 == 0) ? &gif2 : &gif3, cx, y);
         DisplayManager.setTextColor(it.color);
         DisplayManager.setCursor(cx + 8 + ICON_TEXT_GAP, y + 6);
         DisplayManager.matrixPrint(it.text);

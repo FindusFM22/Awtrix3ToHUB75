@@ -124,6 +124,7 @@ public:
     int *getLedColors();
     CRGB getPixelColor(int16_t x, int16_t y);
     CRGB *getLeds();
+    CRGB *getLedsCopy();
     void forceNextApp();
     String getEffectNames();
     String getTransitionNames();

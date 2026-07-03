@@ -131,7 +131,7 @@ const unsigned long interval_LDR = 100;
 // -1 forces first fetch as soon as WiFi is up (rather than waiting 10 min).
 unsigned long previousMillis_Weather = 0;
 bool weatherFetchDone = false;
-const unsigned long interval_Weather = 600000UL; // 10 minutes
+const unsigned long interval_Weather = 900000UL; // 15 minutes
 #endif
 int total = 0;
 unsigned long startTime;
@@ -551,8 +551,8 @@ void PeripheryManager_::fetchOutdoorTemp()
     char url[96];
     // 4 decimal places is well below wttr.in's practical location resolution
     // and keeps the URL comfortably under any header size limits.
-    // Format: "+18°C|Partly cloudy|3" — %t (temp) | %C (condition) | %u (UV index)
-    snprintf(url, sizeof(url), "http://wttr.in/%.4f,%.4f?format=%%t|%%C|%%u&m",
+    // Format: "+18°C|Partly cloudy|3|72" — %t (temp) | %C (condition) | %u (UV) | %h (humidity)
+    snprintf(url, sizeof(url), "http://wttr.in/%.4f,%.4f?format=%%t|%%C|%%u|%%h&m",
              OUTDOOR_LAT, OUTDOOR_LON);
     http.begin(url);
     http.setTimeout(5000);
@@ -567,10 +567,13 @@ void PeripheryManager_::fetchOutdoorTemp()
         // Split at "|" delimiters.
         int sep1 = body.indexOf('|');
         int sep2 = (sep1 >= 0) ? body.indexOf('|', sep1 + 1) : -1;
+        int sep3 = (sep2 >= 0) ? body.indexOf('|', sep2 + 1) : -1;
         String tPart = (sep1 > 0) ? body.substring(0, sep1) : body;
         String cPart = (sep1 > 0 && sep2 > 0) ? body.substring(sep1 + 1, sep2)
                      : (sep1 > 0) ? body.substring(sep1 + 1) : "";
-        String uPart = (sep2 > 0) ? body.substring(sep2 + 1) : "";
+        String uPart = (sep2 > 0 && sep3 > 0) ? body.substring(sep2 + 1, sep3)
+                     : (sep2 > 0) ? body.substring(sep2 + 1) : "";
+        String hPart = (sep3 > 0) ? body.substring(sep3 + 1) : "";
 
         tPart.replace("+", "");
         // wttr.in returns "°C" (UTF-8). Strip everything from the ° onward.
@@ -579,6 +582,7 @@ void PeripheryManager_::fetchOutdoorTemp()
         if (deg > 0) tPart = tPart.substring(0, deg);
         tPart.trim();
         uPart.trim();
+        hPart.trim();
 
         float parsed = tPart.toFloat();
         // toFloat returns 0.0 on failure — accept 0 only if the string was "0" or "0.0"
@@ -593,6 +597,12 @@ void PeripheryManager_::fetchOutdoorTemp()
                 OUTDOOR_UV = uPart.toInt();
             else
                 OUTDOOR_UV = -1;
+            // Humidity: wttr.in returns "72%" — strip the % sign
+            hPart.replace("%", "");
+            if (hPart.length() > 0 && isdigit((unsigned char)hPart[0]))
+                OUTDOOR_HUM = hPart.toInt();
+            else
+                OUTDOOR_HUM = -1;
         }
     }
     http.end();

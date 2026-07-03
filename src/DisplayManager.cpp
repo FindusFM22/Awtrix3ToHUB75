@@ -2711,23 +2711,26 @@ void DisplayManager_::setCustomAppColors(uint32_t color)
 
 String DisplayManager_::ledsAsJson()
 {
-  // Dynamic (heap) instead of Static (stack) — at 64x32 the required size is
-  // ~32 KB, which would overflow the stack when this is called from the
-  // web server task.
-  DynamicJsonDocument jsonDoc(JSON_ARRAY_SIZE(MATRIX_WIDTH * MATRIX_HEIGHT) + 64);
-  JsonArray jsonColors = jsonDoc.to<JsonArray>();
+  // Build JSON array manually to avoid a single 34 KB DynamicJsonDocument
+  // allocation that fails under heap fragmentation on HUB75 builds.
+  const int total = MATRIX_WIDTH * MATRIX_HEIGHT;
+  String out;
+  out.reserve(total * 8 + 4);  // worst case: 8 chars per entry + brackets
+  out = '[';
   for (int y = 0; y < MATRIX_HEIGHT; y++)
   {
     for (int x = 0; x < MATRIX_WIDTH; x++)
     {
       int index = matrix->XY(x, y);
-      int color = (ledsCopy[index].r << 16) | (ledsCopy[index].g << 8) | ledsCopy[index].b;
-      jsonColors.add(color);
+      uint32_t color = ((uint32_t)ledsCopy[index].r << 16) |
+                       ((uint32_t)ledsCopy[index].g << 8)  |
+                       ledsCopy[index].b;
+      if (y > 0 || x > 0) out += ',';
+      out += color;
     }
   }
-  String jsonString;
-  serializeJson(jsonColors, jsonString);
-  return jsonString;
+  out += ']';
+  return out;
 }
 
 String DisplayManager_::getAppsWithIcon()
@@ -2951,6 +2954,11 @@ bool DisplayManager_::moodlight(const char *json)
 CRGB *DisplayManager_::getLeds()
 {
   return leds;
+}
+
+CRGB *DisplayManager_::getLedsCopy()
+{
+  return ledsCopy;
 }
 
 String DisplayManager_::getEffectNames()
