@@ -49,12 +49,8 @@ GifPlayer gif3;  // marquee: three players cover the max simultaneously
                  // Players are assigned per-slot cyclically so a slot always
                  // gets the same player and its GifPlayer file-name cache
                  // stays warm.
-GifPlayer gif4;  // Shared between marquee slot 4 (UV) and NotifyOverlay.
-                 // The two are never active at the same time — drawGrid()
-                 // (and thus the marquee) is skipped while notifyFlag is
-                 // true. After a notification ends, gif4 will reload the UV
-                 // icon on its next visible pass; the reload happens
-                 // off-screen when the marquee restarts from the right.
+GifPlayer gif4;  // fourth player for slot 4 (UV): keeps slot 1 (indoor hum)
+                 // and slot 4 on separate players despite (i%3) collision.
 
 MatrixDisplayUi::MatrixDisplayUi(FastLED_NeoMatrix *matrix)
 {
@@ -500,12 +496,7 @@ void MatrixDisplayUi::drawOverlays()
 {
   for (uint8_t i = 0; i < this->overlayCount; i++)
   {
-    // NotifyOverlay uses gif4 (shared with marquee slot 4/UV). They are
-    // never active simultaneously — drawGrid() and thus the marquee is
-    // skipped while notifyFlag is true, so notifications get a fresh cache
-    // instead of fighting gif2 (indoor humidity), which was the reason
-    // notifications used to open with a black square in the icon slot.
-    (this->overlayFunctions[i])(this->matrix, &this->state, &gif4);
+    (this->overlayFunctions[i])(this->matrix, &this->state, &gif2);
   }
 }
 
