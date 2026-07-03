@@ -1361,7 +1361,7 @@ static void drawClockRow(FastLED_NeoMatrix *matrix)
   }
 }
 
-// Weekday line at y=16: 7 segments, current day highlighted.
+// Weekday line at y=12/13: 7 segments, 6x2 px each, current day highlighted.
 // Draws pixel-by-pixel through DisplayManager.drawPixel(uint32_t) to keep
 // full 8-bit-per-channel colour — matrix->drawFastHLine(uint16_t) would
 // downcast to RGB565 (0x66 → 0x60) and then gammaCorrection() knocks that
@@ -1369,6 +1369,7 @@ static void drawClockRow(FastLED_NeoMatrix *matrix)
 static void drawWeekdayLine(FastLED_NeoMatrix *matrix)
 {
   const uint8_t SEG_W = 6;
+  const uint8_t SEG_H = 2;
   const uint8_t SEG_SPACING = 2;
   const uint8_t COUNT = 7;
   const int stripW = COUNT * SEG_W + (COUNT - 1) * SEG_SPACING;   // 54
@@ -1380,8 +1381,9 @@ static void drawWeekdayLine(FastLED_NeoMatrix *matrix)
   {
     const int x = START_X + i * (SEG_W + SEG_SPACING);
     const uint32_t color = (i == today) ? WDC_ACTIVE : WDC_INACTIVE;
-    for (int dx = 0; dx < SEG_W; dx++)
-      DisplayManager.drawPixel(x + dx, Y, color);
+    for (int dy = 0; dy < SEG_H; dy++)
+      for (int dx = 0; dx < SEG_W; dx++)
+        DisplayManager.drawPixel(x + dx, Y + dy, color);
   }
 }
 
