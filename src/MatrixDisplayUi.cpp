@@ -45,6 +45,7 @@ extern const uint8_t bigdigits_mask[12][7];
 GifPlayer gif1;
 GifPlayer gif2;
 GifPlayer gif3;  // third player for marquee: prevents gif1/gif2 state collision
+GifPlayer gif4;  // fourth player for UV icon in slot 4
 
 MatrixDisplayUi::MatrixDisplayUi(FastLED_NeoMatrix *matrix)
 {
@@ -59,6 +60,7 @@ void MatrixDisplayUi::init()
   gif1.setMatrix(this->matrix);
   gif2.setMatrix(this->matrix);
   gif3.setMatrix(this->matrix);
+  gif4.setMatrix(this->matrix);
 }
 
 void MatrixDisplayUi::setTargetFPS(uint8_t fps)
@@ -1163,6 +1165,13 @@ static void gridDrawIconIndoorTemp(FastLED_NeoMatrix *matrix, GifPlayer *gifPlay
     static fs::File f;
     gridDrawLittleFSIcon(matrix, gifPlayer, x, y, "70915", f);
 }
+
+static void gridDrawIconUv(FastLED_NeoMatrix *matrix, GifPlayer *gifPlayer,
+                           int16_t x, int16_t y)
+{
+    static fs::File f;
+    gridDrawLittleFSIcon(matrix, gifPlayer, x, y, "52016", f);
+}
 // widget with a dynamic icon (like Outdoor's weather-based GIF) can reuse
 // the centering math without duplicating it.
 static void gridDrawWidget(FastLED_NeoMatrix *matrix,
@@ -1419,9 +1428,9 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
     snprintf(outHumTxt, sizeof(outHumTxt), "--%");
   }
   if (OUTDOOR_UV >= 0)
-    snprintf(uvTxt, sizeof(uvTxt), "UV%d", OUTDOOR_UV);
+    snprintf(uvTxt, sizeof(uvTxt), "%d", OUTDOOR_UV);
   else
-    snprintf(uvTxt, sizeof(uvTxt), "UV?");
+    snprintf(uvTxt, sizeof(uvTxt), "?");
 
   uint32_t uvColor;
   if (OUTDOOR_UV < 0)         uvColor = 0x808080;
@@ -1436,7 +1445,7 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
       {nullptr, gridDrawIconIndoorHum,  inHumTxt,  0xFFFFFF},
       {nullptr, gridDrawOutdoorIcon,    outTxt,    0xFFFFFF},
       {icon_2075, nullptr,              outHumTxt, 0xFFFFFF},
-      {icon_234,  nullptr,              uvTxt,     0xFFFFFF},
+      {nullptr, gridDrawIconUv,         uvTxt,     0xFFFFFF},
   };
   const int itemCount = sizeof(items) / sizeof(items[0]);
 
@@ -1480,8 +1489,11 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
         {
           // Each dynamic slot gets its own dedicated GifPlayer to avoid
           // decode-state collisions when multiple icons are visible at once.
-          GifPlayer *players[] = {&gif1, &gif2, &gif3};
-          it.drawDynamic(matrix, players[i < 3 ? i : 0], cx, y);
+          // Slot 4 is UV (index 4); mapped to gif4. Slot 3 is a static PROGMEM
+          // icon (icon_2075) so no player is needed there.
+          GifPlayer *players[] = {&gif1, &gif2, &gif3, nullptr, &gif4};
+          GifPlayer *p = (i < 5 && players[i] != nullptr) ? players[i] : &gif1;
+          it.drawDynamic(matrix, p, cx, y);
         }
         DisplayManager.setTextColor(it.color);
         DisplayManager.setCursor(cx + 8 + ICON_TEXT_GAP, y + 6);
