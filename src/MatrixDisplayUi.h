@@ -91,7 +91,11 @@ class MatrixDisplayUi
 {
 private:
   FastLED_NeoMatrix *matrix;
+#ifndef DISPLAY_HUB75
+  // Legacy 32x8 scratch used by the classic app-rotation transitions.
+  // drawGrid() on hub75 replaces the transition pipeline, so this frees 768 B.
   CRGB ledsCopy[256];
+#endif
   // Values for the Apps
   AnimationDirection appAnimationDirection = SLIDE_DOWN;
   int8_t lastTransitionDirection = 1;

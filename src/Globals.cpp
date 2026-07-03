@@ -364,11 +364,11 @@ uint16_t MQTT_PORT = 1883;
 String MQTT_USER;
 String MQTT_PASS;
 String MQTT_PREFIX;
-bool IO_BROKER = false;
+// IO_BROKER removed (was unread).
 bool NET_STATIC = false;
 bool SHOW_TIME = true;
 bool SHOW_DATE = true;
-bool SHOW_WEATHER = true;
+// SHOW_WEATHER removed (was unread).
 bool SHOW_BAT = true;
 bool SHOW_TEMP = true;
 bool SHOW_HUM = true;

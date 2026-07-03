@@ -67,11 +67,13 @@ int previousDataLength = 0;
 static MatrixPanel_I2S_DMA *dma_display = nullptr;
 #endif
 fs::File gifFile;
-GifPlayer gif;
+// Removed unused global `GifPlayer gif;` — all GIF playback on hub75 goes
+// through gif1/gif2/gif3 owned by MatrixDisplayUi. Saved ~10 KB RAM.
 
 uint16_t gifX, gifY;
 CRGB leds[MATRIX_WIDTH * MATRIX_HEIGHT];
-CRGB ledsCopy[MATRIX_WIDTH * MATRIX_HEIGHT];
+// Removed `ledsCopy` scratch buffer — /api/screen and ledsAsJson() now read
+// directly from `leds`. Saves 6 KB RAM plus one per-frame memcpy.
 float actualBri;
 int16_t cursor_x, cursor_y;
 uint32_t textColor;
@@ -1242,7 +1244,6 @@ void DisplayManager_::setup()
     FastLED.setTemperature(COLOR_TEMPERATURE);
   }
 #endif
-  gif.setMatrix(matrix);
   ui->setAppAnimation(SLIDE_DOWN);
 
   ui->setTargetFPS(MATRIX_FPS);
@@ -1329,7 +1330,6 @@ void DisplayManager_::tick()
   {
     GameManager.tick();
     presentFrame();
-    memcpy(ledsCopy, leds, sizeof(leds));
   }
   else if (AP_MODE)
   {
@@ -2091,7 +2091,6 @@ float logMap(float x, float in_min, float in_max, float out_min, float out_max, 
 void DisplayManager_::gammaCorrection()
 {
   float gamma = logMap(actualBri, 2, 180, 0.535, 2.3, 1.9);
-  memcpy(ledsCopy, leds, sizeof(leds));
   for (int i = 0; i < MATRIX_WIDTH * MATRIX_HEIGHT; i++)
   {
     leds[i] = applyGamma_video(leds[i], gamma);
@@ -2722,9 +2721,9 @@ String DisplayManager_::ledsAsJson()
     for (int x = 0; x < MATRIX_WIDTH; x++)
     {
       int index = matrix->XY(x, y);
-      uint32_t color = ((uint32_t)ledsCopy[index].r << 16) |
-                       ((uint32_t)ledsCopy[index].g << 8)  |
-                       ledsCopy[index].b;
+      uint32_t color = ((uint32_t)leds[index].r << 16) |
+                       ((uint32_t)leds[index].g << 8)  |
+                       leds[index].b;
       if (y > 0 || x > 0) out += ',';
       out += color;
     }
@@ -2958,7 +2957,10 @@ CRGB *DisplayManager_::getLeds()
 
 CRGB *DisplayManager_::getLedsCopy()
 {
-  return ledsCopy;
+  // ledsCopy was removed; /api/screen streams directly from the live buffer.
+  // Trade-off: liveview now shows post-gamma colors, which is acceptable and
+  // frees 6 KB RAM + one memcpy per frame.
+  return leds;
 }
 
 int DisplayManager_::getMatrixWidth()  { return MATRIX_WIDTH; }

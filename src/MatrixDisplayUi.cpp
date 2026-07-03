@@ -586,6 +586,10 @@ void rotate(int &x, int &y, float angle)
   y = newY + 4;
 }
 
+#ifndef DISPLAY_HUB75
+// Classic 32x8 app-rotation transitions. Not linked on hub75 because the tick
+// path calls drawGrid() and skips drawApp() entirely; guarding also removes
+// the associated 768 B ledsCopy[256] member (see MatrixDisplayUi.h).
 void MatrixDisplayUi::fadeTransition()
 {
   float progress = (float)this->state.ticksSinceLastStateSwitch / (float)this->ticksPerTransition;
@@ -959,6 +963,7 @@ void MatrixDisplayUi::crossfadeTransition()
     }
   }
 }
+#endif  // !DISPLAY_HUB75 (classic app-rotation transitions)
 
 #ifdef DISPLAY_HUB75
 // Four native apps rendered concurrently in 32x16 quadrants of the 64x32

@@ -42,11 +42,11 @@ extern uint16_t MQTT_PORT;
 extern String MQTT_USER;
 extern String MQTT_PASS;
 extern String MQTT_PREFIX;
-extern bool IO_BROKER;
+// IO_BROKER removed — was declared+defined but never read anywhere.
 extern bool NET_STATIC;
 extern bool SHOW_TIME;
 extern bool SHOW_DATE;
-extern bool SHOW_WEATHER;
+// SHOW_WEATHER removed — never read anywhere.
 extern bool SHOW_BAT;
 extern String HA_PREFIX;
 extern bool SHOW_TEMP;
@@ -91,7 +91,7 @@ extern float TEMP_OFFSET;
 extern float HUM_OFFSET;
 extern int BRIGHTNESS;
 extern int BRIGHTNESS_PERCENT;
-extern String TEXTCOLOR;
+// TEXTCOLOR (String) removed — extern-only, never defined; TEXTCOLOR_888 is the real one.
 extern String TIME_FORMAT;
 extern bool AUTO_BRIGHTNESS;
 extern bool AP_MODE;

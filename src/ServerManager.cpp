@@ -208,20 +208,10 @@ void addHandler()
                        } });
     mws.addHandler("/api/nextapp", HTTP_ANY, []()
                    { DisplayManager.nextApp(); mws.webserver->send(200,F("text/plain"),F("OK")); });
-    mws.addHandler("/fullscreen", HTTP_GET, []()
-                   {
-    String fps = mws.webserver->arg("fps");
-    if (fps == "") {
-        fps = "30"; 
-    }
-    String finalHTML = screenfull_html; 
-    finalHTML.replace("%%FPS%%", fps);
-
-    mws.webserver->send(200, "text/html", finalHTML.c_str()); });
+    // /fullscreen (screenfull_html) and /backup (backup_html) removed —
+    // convenience pages not used on hub75, freed ~4.5 KB flash.
     mws.addHandler("/screen", HTTP_GET, []()
                    { mws.webserver->send(200, "text/html", screen_html); });
-    mws.addHandler("/backup", HTTP_GET, []()
-                   { mws.webserver->send(200, "text/html", backup_html); });
     mws.addHandler("/api/previousapp", HTTP_POST, []()
                    { DisplayManager.previousApp(); mws.webserver->send(200,F("text/plain"),F("OK")); });
     mws.addHandler("/api/notify/dismiss", HTTP_ANY, []()
