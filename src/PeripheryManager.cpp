@@ -131,7 +131,7 @@ const unsigned long interval_LDR = 100;
 // -1 forces first fetch as soon as WiFi is up (rather than waiting 10 min).
 unsigned long previousMillis_Weather = 0;
 bool weatherFetchDone = false;
-const unsigned long interval_Weather = 900000UL; // 15 minutes
+const unsigned long interval_Weather = 900000UL; // 15minutes
 #endif
 int total = 0;
 unsigned long startTime;

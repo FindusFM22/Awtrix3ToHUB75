@@ -269,7 +269,17 @@ void loadSettings()
     BAT_COLOR = Settings.getUInt("BAT_COL", 0);
 #endif
     WDC_ACTIVE = Settings.getUInt("WDCA", 0xFFFFFF);
-    WDC_INACTIVE = Settings.getUInt("WDCI", 0x666666);
+    // 0x666666 vanishes on HUB75 after gamma; bumped to 0xAAAAAA so the
+    // inactive weekday segments stay visibly grey. Clamp any legacy NVS
+    // value darker than that so old configs auto-upgrade without an API call.
+    WDC_INACTIVE = Settings.getUInt("WDCI", 0xAAAAAA);
+    {
+      const uint8_t r = (WDC_INACTIVE >> 16) & 0xFF;
+      const uint8_t g = (WDC_INACTIVE >>  8) & 0xFF;
+      const uint8_t b =  WDC_INACTIVE        & 0xFF;
+      const uint8_t maxCh = r > g ? (r > b ? r : b) : (g > b ? g : b);
+      if (maxCh < 0xAA) WDC_INACTIVE = 0xAAAAAA;
+    }
     AUTO_TRANSITION = Settings.getBool("ATRANS", true);
     SHOW_WEEKDAY = Settings.getBool("WD", true);
     TIME_PER_TRANSITION = Settings.getUInt("TSPEED", 400);
