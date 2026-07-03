@@ -1452,6 +1452,13 @@ static void drawMarquee(FastLED_NeoMatrix *matrix, MatrixDisplayUiState *state)
 
   int cx = -scrollOffset;
   const int y = 22;
+  // Pre-warm the outdoor-icon GIF once per Marquee frame so its first-time
+  // parseTableBasedImage() (parse header + palette + LZW init + first frame
+  // ~50-100 ms) is paid outside the visible strip. Without this the icon
+  // appears mid-panel because the first `playGif` blocks the tick just as
+  // the item scrolls into view, and millis() jumps forward while parsing.
+  // Draw off-screen (x=-100); redrawLastFrame() clips at panel bounds.
+  gridDrawOutdoorIcon(matrix, &gif3, -100, y);
   for (int pass = 0; pass < 2; pass++)
   {
     for (int i = 0; i < itemCount; i++)
