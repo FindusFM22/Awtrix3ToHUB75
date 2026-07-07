@@ -113,11 +113,7 @@ DisplayManager_ &DisplayManager = DisplayManager.getInstance();
 
 void DisplayManager_::setBrightness(int bri)
 {
-  bool wakeup;
-  if (!notifications.empty())
-  {
-    wakeup = notifications[0].wakeup;
-  }
+  bool wakeup = !notifications.empty() && notifications[0].wakeup;
 
   if (MATRIX_OFF && !wakeup)
   {
@@ -320,7 +316,7 @@ void DisplayManager_::GradientText(int16_t x, int16_t y, const char *text, int c
   for (uint16_t i = 0; i < textLength; i++)
   {
     // Bestimme den Interpolationswert basierend auf der aktuellen Position i im Text
-    float t = (float)i / (textLength - 1);
+    float t = (textLength <= 1) ? 0.0f : (float)i / (textLength - 1);
 
     // Bestimme die Farbe für das aktuelle Zeichen basierend auf dem Farbverlauf
     uint32_t TC = interpolateColor(color1, color2, t);
@@ -1511,7 +1507,7 @@ void DisplayManager_::selectButtonLong()
 
 void DisplayManager_::dismissNotify()
 {
-  bool wakeup;
+  bool wakeup = false;
   if (!notifications.empty())
   {
     if (notifications.size() >= 2)
@@ -1771,7 +1767,7 @@ String DisplayManager_::getStats()
   {
     double formattedTemp = roundToDecimalPlaces(CURRENT_TEMP, TEMP_DECIMAL_PLACES);
     doc[TempKey] = formattedTemp;
-    doc[HumKey] = static_cast<uint8_t>(CURRENT_HUM);
+    doc[HumKey] = roundToDecimalPlaces(CURRENT_HUM, 1);
   }
   doc[UpTimeKey] = PeripheryManager.readUptime();
   doc[SignalStrengthKey] = WiFi.RSSI();

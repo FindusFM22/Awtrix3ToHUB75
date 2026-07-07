@@ -208,7 +208,7 @@ MatrixDisplayUiState *MatrixDisplayUi::getUiState()
 int8_t MatrixDisplayUi::update()
 {
   long appStart = millis();
-  int8_t timeBudget = this->updateInterval - (appStart - this->state.lastUpdate);
+  int timeBudget = this->updateInterval - (appStart - this->state.lastUpdate);
   if (timeBudget <= 0)
   {
     // Implement frame skipping to ensure time budget is kept
@@ -1370,7 +1370,7 @@ static void drawClockRow(FastLED_NeoMatrix *matrix)
   }
 }
 
-// Weekday line at y=12/13: 7 segments, 6x2 px each, current day highlighted.
+// Weekday line at y=13: 7 segments, 6x1 px each, current day 6x2 (sticks up).
 // Draws pixel-by-pixel through DisplayManager.drawPixel(uint32_t) to keep
 // full 8-bit-per-channel colour — matrix->drawFastHLine(uint16_t) would
 // downcast to RGB565 (0x66 → 0x60) and then gammaCorrection() knocks that
@@ -1378,21 +1378,21 @@ static void drawClockRow(FastLED_NeoMatrix *matrix)
 static void drawWeekdayLine(FastLED_NeoMatrix *matrix)
 {
   const uint8_t SEG_W = 6;
-  const uint8_t SEG_H = 2;
   const uint8_t SEG_SPACING = 2;
   const uint8_t COUNT = 7;
   const int stripW = COUNT * SEG_W + (COUNT - 1) * SEG_SPACING;   // 54
   const int START_X = (64 - stripW) / 2;                           // 5
-  const uint8_t Y = 12;
+  const uint8_t Y_BASE = 13;
   const uint8_t dayOffset = START_ON_MONDAY ? 0 : 1;
   const int today = (timer_localtime()->tm_wday + 6 + dayOffset) % 7;
   for (int i = 0; i < COUNT; i++)
   {
     const int x = START_X + i * (SEG_W + SEG_SPACING);
     const uint32_t color = (i == today) ? WDC_ACTIVE : WDC_INACTIVE;
-    for (int dy = 0; dy < SEG_H; dy++)
+    const uint8_t h = (i == today) ? 2 : 1;
+    for (int dy = 0; dy < h; dy++)
       for (int dx = 0; dx < SEG_W; dx++)
-        DisplayManager.drawPixel(x + dx, Y + dy, color);
+        DisplayManager.drawPixel(x + dx, Y_BASE - dy, color);
   }
 }
 

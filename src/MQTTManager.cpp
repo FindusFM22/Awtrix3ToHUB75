@@ -507,7 +507,7 @@ void MQTTManager_::sendStats()
             humidity->setValue(buffer);
         }
 
-        snprintf(buffer, 5, "%.0f", CURRENT_LUX);
+        snprintf(buffer, sizeof(buffer), "%.0f", CURRENT_LUX);
         illuminance->setValue(buffer);
         BriMode->setState(AUTO_BRIGHTNESS, false);
         Matrix->setBrightness(BRIGHTNESS);
@@ -519,7 +519,7 @@ void MQTTManager_::sendStats()
         color.blue = TEXTCOLOR_888 & 0xFF;
         Matrix->setRGBColor(color);
         int8_t rssiValue = WiFi.RSSI();
-        char rssiString[4];
+        char rssiString[5];
         snprintf(rssiString, sizeof(rssiString), "%d", rssiValue);
         strength->setValue(rssiString);
 

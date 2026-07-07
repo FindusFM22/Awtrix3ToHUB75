@@ -82,8 +82,7 @@ uint32_t getColorFromJsonVariant(JsonVariant colorVariant, uint32_t defaultColor
             uint8_t h = colorArray[1];
             uint8_t s = colorArray[2];
             uint8_t v = colorArray[3];
-            uint8_t r = 0, g = 0, b = 0;
-            return (r << 16) | (g << 8) | b; // Ignoring alpha channel
+            return hsvToRgb(h, s, v);
         }
     }
 
@@ -101,7 +100,7 @@ float getTextWidth(const char *text, byte textCase)
     float width = 0;
     for (const char *c = text; *c != '\0'; ++c)
     {
-        char current_char = *c;
+        unsigned char current_char = *c;
         if ((UPPERCASE_LETTERS && textCase == 0) || textCase == 1)
         {
             current_char = toupper(current_char);
