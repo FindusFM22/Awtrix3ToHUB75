@@ -1,8 +1,5 @@
 #include <PeripheryManager.h>
-#include "Adafruit_SHT31.h"
 #include "Adafruit_BME280.h"
-#include "Adafruit_BMP280.h"
-#include "Adafruit_HTU21DF.h"
 #ifdef HAS_DFPLAYER
 #include "SoftwareSerial.h"
 #include <DFMiniMp3.h>
@@ -80,9 +77,6 @@
 #endif
 
 Adafruit_BME280 bme280;
-Adafruit_BMP280 bmp280;
-Adafruit_HTU21DF htu21df;
-Adafruit_SHT31 sht31;
 
 #ifdef awtrix2_upgrade
 #define USED_PHOTOCELL LightDependentResistor::GL5528
@@ -488,24 +482,6 @@ void PeripheryManager_::setup()
             DEBUG_PRINTLN(F("BME280 sensor detected"));
         TEMP_SENSOR_TYPE = TEMP_SENSOR_TYPE_BME280;
     }
-    else if (bmp280.begin(BMP280_ADDRESS) || bmp280.begin(BMP280_ADDRESS_ALT))
-    {
-        if (DEBUG_MODE)
-            DEBUG_PRINTLN(F("BMP280 sensor detected"));
-        TEMP_SENSOR_TYPE = TEMP_SENSOR_TYPE_BMP280;
-    }
-    else if (htu21df.begin())
-    {
-        if (DEBUG_MODE)
-            DEBUG_PRINTLN(F("HTU21DF sensor detected"));
-        TEMP_SENSOR_TYPE = TEMP_SENSOR_TYPE_HTU21DF;
-    }
-    else if (sht31.begin(0x44))
-    {
-        if (DEBUG_MODE)
-            DEBUG_PRINTLN(F("SHT31 sensor detected"));
-        TEMP_SENSOR_TYPE = TEMP_SENSOR_TYPE_SHT31;
-    }
 
     // (Historical duplicate dfmp3.begin() removed — the HAS_DFPLAYER-guarded
     // block earlier in setup() already covers the awtrix2_upgrade case.)
@@ -662,27 +638,10 @@ void PeripheryManager_::tick()
 #endif
         if (SENSOR_READING)
         {
-            switch (TEMP_SENSOR_TYPE)
+            if (TEMP_SENSOR_TYPE == TEMP_SENSOR_TYPE_BME280)
             {
-            case TEMP_SENSOR_TYPE_BME280:
                 CURRENT_TEMP = bme280.readTemperature();
                 CURRENT_HUM = bme280.readHumidity();
-                break;
-            case TEMP_SENSOR_TYPE_BMP280:
-                CURRENT_TEMP = bmp280.readTemperature();
-                CURRENT_HUM = 0;
-                break;
-            case TEMP_SENSOR_TYPE_HTU21DF:
-                CURRENT_TEMP = htu21df.readTemperature();
-                CURRENT_HUM = htu21df.readHumidity();
-                break;
-            case TEMP_SENSOR_TYPE_SHT31:
-                sht31.readBoth(&CURRENT_TEMP, &CURRENT_HUM);
-                break;
-            default:
-                CURRENT_TEMP = 0;
-                CURRENT_HUM = 0;
-                break;
             }
 
             CURRENT_TEMP += TEMP_OFFSET;

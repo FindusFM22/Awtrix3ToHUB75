@@ -1370,7 +1370,7 @@ static void drawClockRow(FastLED_NeoMatrix *matrix)
   }
 }
 
-// Weekday line at y=13: 7 segments, 6x1 px each, current day 6x2 (sticks up).
+// Weekday line: all segments at y=13 (1x6), active day additionally at y=12 (sticks up).
 // Draws pixel-by-pixel through DisplayManager.drawPixel(uint32_t) to keep
 // full 8-bit-per-channel colour — matrix->drawFastHLine(uint16_t) would
 // downcast to RGB565 (0x66 → 0x60) and then gammaCorrection() knocks that
@@ -1389,10 +1389,13 @@ static void drawWeekdayLine(FastLED_NeoMatrix *matrix)
   {
     const int x = START_X + i * (SEG_W + SEG_SPACING);
     const uint32_t color = (i == today) ? WDC_ACTIVE : WDC_INACTIVE;
-    const uint8_t h = (i == today) ? 2 : 1;
-    for (int dy = 0; dy < h; dy++)
+    // Base row — all days
+    for (int dx = 0; dx < SEG_W; dx++)
+      DisplayManager.drawPixel(x + dx, Y_BASE, color);
+    // Extra row above — active day only
+    if (i == today)
       for (int dx = 0; dx < SEG_W; dx++)
-        DisplayManager.drawPixel(x + dx, Y_BASE - dy, color);
+        DisplayManager.drawPixel(x + dx, Y_BASE - 1, color);
   }
 }
 

@@ -309,6 +309,32 @@ void addHandler()
                     } });
     mws.addHandler("/api/r2d2", HTTP_POST, []()
                    { PeripheryManager.r2d2(mws.webserver->arg("plain").c_str()); mws.webserver->send(200,F("text/plain"),F("OK")); });
+
+    // Streaming OTA endpoint — bypasses HTTPUpdateServer's 128KB TCP buffer limit.
+    // Reads the raw request body in chunks and pipes directly into Update.write().
+    mws.webserver->on("/ota", HTTP_POST, []() {
+        if (Update.hasError()) {
+            mws.webserver->send(500, F("text/plain"), F("Update failed"));
+        } else {
+            mws.webserver->send(200, F("text/plain"), F("Update Success! Rebooting..."));
+            delay(200);
+            ESP.restart();
+        }
+    }, []() {
+        HTTPUpload &upload = mws.webserver->upload();
+        if (upload.status == UPLOAD_FILE_START) {
+            uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+            if (!Update.begin(maxSketchSpace, U_FLASH)) {
+                Update.printError(Serial);
+            }
+        } else if (upload.status == UPLOAD_FILE_WRITE) {
+            if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+                Update.printError(Serial);
+            }
+        } else if (upload.status == UPLOAD_FILE_END) {
+            Update.end(true);
+        }
+    });
 }
 
 void ServerManager_::setup()

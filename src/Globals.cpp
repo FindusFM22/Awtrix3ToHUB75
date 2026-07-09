@@ -368,7 +368,7 @@ IPAddress gateway;
 IPAddress subnet;
 IPAddress primaryDNS;
 IPAddress secondaryDNS;
-const char *VERSION = "0.98";
+const char *VERSION = "0.99-test";
 String MQTT_HOST = "";
 uint16_t MQTT_PORT = 1883;
 String MQTT_USER;
@@ -424,7 +424,7 @@ uint16_t MAX_BATTERY = 665;
 #ifdef awtrix2_upgrade
 float TEMP_OFFSET;
 #else
-float TEMP_OFFSET = -9;
+float TEMP_OFFSET = 0;
 #endif
 // Battery telemetry storage is unconditional to match extern declarations
 // in Globals.h; writers are HAS_BATTERY-gated, readers see zeroed values

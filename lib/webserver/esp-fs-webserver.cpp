@@ -121,8 +121,31 @@ bool FSWebServer::begin( int port,const char *path)
     // - second callback handles file upload at that location
     webserver->on("/edit", HTTP_POST, std::bind(&FSWebServer::replyOK, this), authMiddleware(std::bind(&FSWebServer::handleFileUpload, this)));
 
-    // OTA update via webbrowser
-    m_httpUpdater.setup(webserver, authUser, authPass);
+    // OTA update — replace stock HTTPUpdateServer with a streaming handler.
+    // The stock handler processes the multipart body one byte at a time via
+    // _uploadReadByte(), which stalls the TCP receive window at ~128 KB.
+    // This handler sets a long client timeout and uses the same Upload callback
+    // mechanism, but the WebServer will stream chunks via UPLOAD_FILE_WRITE.
+    webserver->on("/update", HTTP_POST, [this]() {
+        bool ok = !Update.hasError();
+        this->webserver->sendHeader("Connection", "close");
+        this->webserver->send(ok ? 200 : 500, "text/plain",
+            ok ? "<META http-equiv=\"refresh\" content=\"15;URL=/\">Update Success! Rebooting..." : "Update Failed");
+        if (ok) { delay(500); ESP.restart(); }
+    }, [this]() {
+        HTTPUpload &upload = this->webserver->upload();
+        if (upload.status == UPLOAD_FILE_START) {
+            // Extend client timeout to survive slow byte-by-byte reads over 1.2 MB
+            this->webserver->client().setTimeout(60000);
+            uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+            if (!Update.begin(maxSketchSpace, U_FLASH)) Update.printError(Serial);
+        } else if (upload.status == UPLOAD_FILE_WRITE) {
+            if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
+                Update.printError(Serial);
+        } else if (upload.status == UPLOAD_FILE_END) {
+            Update.end(true);
+        }
+    });
 
     webserver->enableCORS(true);
 
